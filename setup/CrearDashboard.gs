@@ -25,7 +25,13 @@ const HOJAS = {
 function crearDashboard() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Borra pestañas previas con los mismos nombres
+  // Guarda el ID del Sheet para que el Web App pueda accederlo.
+  PropertiesService.getScriptProperties().setProperty('SHEET_ID', ss.getId());
+
+  // Crea una pestaña temporal para evitar el error "no se pueden borrar
+  // todas las hojas" cuando borramos las pestañas existentes.
+  const tmp = ss.insertSheet('__tmp_setup__');
+
   Object.values(HOJAS).forEach(nombre => {
     const h = ss.getSheetByName(nombre);
     if (h) ss.deleteSheet(h);
@@ -42,6 +48,9 @@ function crearDashboard() {
   crearAhorro(ss);
   crearDashboardResumen(ss);
 
+  // Quita la pestaña temporal ahora que ya hay otras.
+  ss.deleteSheet(tmp);
+
   // Borra la hoja inicial "Hoja 1" / "Sheet1" si sigue ahí vacía
   const sobrante = ss.getSheets().find(s =>
     (s.getName() === 'Hoja 1' || s.getName() === 'Sheet1') &&
@@ -52,7 +61,7 @@ function crearDashboard() {
   SpreadsheetApp.getUi().alert(
     'Dashboard creado correctamente.\n\n' +
     'Siguiente paso: revisa la pestaña "Config" y rellena tus valores ' +
-    '(mes activo, bote común, objetivo de ahorro, chat IDs de Telegram).'
+    '(mes activo, objetivo de ahorro, chat IDs de Telegram).'
   );
 }
 
