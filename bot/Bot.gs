@@ -2,9 +2,18 @@
  * Bot.gs
  * ------------------------------------------------------------------
  * Webhook de Telegram que conduce un flujo guiado por botones inline
- * para registrar ingresos y gastos en el Sheet. SIN LLM: todo el
- * "entendimiento" se hace por estado finito guardado en
- * PropertiesService (clave = chat_id).
+ * para registrar movimientos en el libro mayor único (hoja Movimientos).
+ * SIN LLM: todo el "entendimiento" se hace por estado finito guardado en
+ * PropertiesService (clave = estado_<chatId>).
+ *
+ * Esquema consolidado (ver CrearDashboard.gs, contrato cerrado):
+ *  - Movimientos: A Fecha | B Tipo | C Persona | D Categoría | E Concepto | F Importe | G Nota
+ *    Tipo ∈ {Ingreso, Aportación, Compartido fijo, Compartido variable, Individual}
+ *    Persona ∈ {FM, Lucía, Bote}
+ *  - Ajustes: parámetros clave-valor en A:B; categorías en D:F (cabecera D1:F1).
+ *  - _Calc: métricas del mes activo en B1..B20 (celdas fijas).
+ *  - Objetivos: A Concepto | B Meta | C Aportado | D %Progreso | E Fecha | F Estado | G Barra
+ *  - _LogBot: A Fecha | B Persona | C Acción | D Detalle.
  *
  * Endpoints:
  *  - doPost(e): lo llama Telegram (webhook).
@@ -13,11 +22,23 @@
  * Acciones utilitarias (ejecutar desde el editor):
  *  - registrarWebhook(): registra esta Web App como webhook de Telegram.
  *  - eliminarWebhook(): la deshace.
- *  - obtenerMiChatId(): te dice qué chat IDs te han escrito (logs).
  * ------------------------------------------------------------------
  */
 
 const API = 'https://api.telegram.org/bot';
+
+// Textos EXACTOS del contrato para la columna Tipo de Movimientos.
+const TIPO_TXT = {
+  ingreso: 'Ingreso',
+  aportacion: 'Aportación',
+  gc_fijo: 'Compartido fijo',
+  gc_variable: 'Compartido variable',
+  gasto_fm: 'Individual',
+  gasto_lucia: 'Individual',
+};
+
+// Tipos de gasto que cuentan para top / atípicos.
+const TIPOS_GASTO = ['Compartido fijo', 'Compartido variable', 'Individual'];
 
 /* ============== ENTRADA HTTP ============== */
 
@@ -51,13 +72,8 @@ function doPost(e) {
 function manejarMensaje(msg) {
   const chatId = msg.chat.id;
   if (!chatAutorizado(chatId)) {
-    enviar(chatId, `Este chat no está autorizado. Pide a FM que añada tu chat ID (${chatId}) en la pestaña Config.`);
+    enviar(chatId, `Este chat no está autorizado. Pide a FM que añada tu chat ID (${chatId}) en la pestaña Ajustes.`);
     return;
-  }
-
-  // Foto: si llega una foto, la asociamos al último movimiento si así se pidió.
-  if (msg.photo && msg.photo.length > 0) {
-    return manejarFoto(chatId, msg);
   }
 
   const texto = (msg.text || '').trim();
@@ -97,9 +113,6 @@ function manejarMensaje(msg) {
   if (texto === '/borrar_ultimo') {
     return pedirConfirmacionBorrarUltimo(chatId);
   }
-  if (texto === '/foto') {
-    return iniciarFoto(chatId);
-  }
   if (texto === '/objetivos') {
     return mostrarMenuObjetivos(chatId);
   }
@@ -124,10 +137,10 @@ function manejarMensaje(msg) {
     case 'esperar_importe': return procesarImporte(chatId, texto, estado);
     case 'esperar_concepto': return procesarConcepto(chatId, texto, estado);
     case 'esperar_objetivo': return procesarNuevoObjetivo(chatId, texto);
-    case 'obj_esperar_concepto': return procesarObjLPConcepto(chatId, texto, estado);
-    case 'obj_esperar_meta': return procesarObjLPMeta(chatId, texto, estado);
-    case 'obj_esperar_fecha': return procesarObjLPFecha(chatId, texto, estado);
-    case 'obj_esperar_aportacion': return procesarObjLPAportacion(chatId, texto, estado);
+    case 'obj_esperar_concepto': return procesarObjConcepto(chatId, texto, estado);
+    case 'obj_esperar_meta': return procesarObjMeta(chatId, texto, estado);
+    case 'obj_esperar_fecha': return procesarObjFecha(chatId, texto, estado);
+    case 'obj_esperar_aportacion': return procesarObjAportacion(chatId, texto, estado);
     default:
       enviar(chatId, 'Estoy esperando un botón. Si te has perdido, pulsa /cancelar.');
   }
@@ -151,11 +164,10 @@ function manejarCallback(cb) {
       return mostrarPersonas(chatId, tipo);
     }
     estado.paso = 'elegir_categoria';
-    guardarEstado(chatId, estado);
     if (tipo === 'gasto_fm') { estado.persona = 'FM'; guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Individual'); }
     if (tipo === 'gasto_lucia') { estado.persona = 'Lucía'; guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Individual'); }
-    if (tipo === 'gc_fijo') return mostrarCategorias(chatId, 'Compartido fijo');
-    if (tipo === 'gc_variable') return mostrarCategorias(chatId, 'Compartido variable');
+    if (tipo === 'gc_fijo') { estado.persona = 'Bote'; guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Compartido fijo'); }
+    if (tipo === 'gc_variable') { guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Compartido variable'); }
   }
 
   if (data.startsWith('persona:')) {
@@ -174,10 +186,10 @@ function manejarCallback(cb) {
   }
 
   if (data.startsWith('pagador:')) {
-    estado.pagador = data.slice(8);
+    estado.persona = data.slice(8); // pagador = Persona del movimiento
     estado.paso = 'esperar_concepto';
     guardarEstado(chatId, estado);
-    return enviar(chatId, `Pagado por: <b>${estado.pagador}</b>\n\nEscribe el concepto (ej: Cena con amigos):`);
+    return enviar(chatId, `Pagado por: <b>${estado.persona}</b>\n\nEscribe el concepto (ej: Cena con amigos):`);
   }
 
   if (data === 'confirmar:si') {
@@ -203,15 +215,17 @@ function manejarCallback(cb) {
   if (data === 'borrar:si') return ejecutarBorrarUltimo(chatId);
   if (data === 'borrar:no') return enviar(chatId, 'Borrado cancelado.');
 
-  // Objetivos largo plazo
+  // Objetivos a largo plazo
   if (data === 'obj:menu') return mostrarMenuObjetivos(chatId);
-  if (data === 'obj:ver') return verObjetivosLP(chatId);
-  if (data === 'obj:add') return iniciarAddObjetivoLP(chatId);
-  if (data === 'obj:aportar') return listarObjetivosLP(chatId, 'aportar');
-  if (data === 'obj:cumplir') return listarObjetivosLP(chatId, 'cumplir');
-  if (data.startsWith('obj:apor:')) return iniciarAportarObjetivoLP(chatId, Number(data.slice(9)));
+  if (data === 'obj:ver') return verObjetivos(chatId);
+  if (data === 'obj:add') return iniciarAddObjetivo(chatId);
+  if (data === 'obj:aportar') return listarObjetivos(chatId, 'aportar');
+  if (data === 'obj:cumplir') return listarObjetivos(chatId, 'cumplir');
+  if (data.startsWith('obj:apor:')) return iniciarAportarObjetivo(chatId, Number(data.slice(9)));
   if (data.startsWith('obj:cump:')) return marcarObjetivoCumplido(chatId, Number(data.slice(9)));
 }
+
+/* ============== CAMBIO DE OBJETIVO DE AHORRO ============== */
 
 function iniciarCambioObjetivo(chatId) {
   const actual = _config('Objetivo ahorro mensual conjunto (€)');
@@ -225,14 +239,15 @@ function procesarNuevoObjetivo(chatId, texto) {
   if (!valor || valor < 0) {
     return enviar(chatId, 'No reconozco ese importe. Escribe un número, ej: 250');
   }
-  const sh = _ss().getSheetByName(HOJAS.CONFIG);
+  const sh = _ss().getSheetByName(HOJAS.AJUSTES);
   const datos = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
   const idx = datos.findIndex(([k]) => k === 'Objetivo ahorro mensual conjunto (€)');
   if (idx === -1) {
     limpiarEstado(chatId);
-    return enviar(chatId, '⚠️ No encuentro la fila del objetivo en Config. Revísalo.');
+    return enviar(chatId, '⚠️ No encuentro la fila del objetivo en Ajustes. Revísalo.');
   }
   sh.getRange(idx + 2, 2).setValue(valor);
+  logBot(personaPorChat(chatId), 'Objetivo de ahorro cambiado', formatoEur(valor) + '/mes');
   limpiarEstado(chatId);
   enviar(chatId, `Objetivo actualizado ✅\n\nNuevo objetivo: <b>${formatoEur(valor)}</b> / mes\n\n/nuevo para seguir`);
 }
@@ -241,31 +256,41 @@ function procesarNuevoObjetivo(chatId, texto) {
 
 function mostrarMenuPrincipal(chatId) {
   const teclado = [
-    [btn('💰 Ingreso', 'tipo:ingreso'), btn('🏦 Aportación al bote', 'tipo:aportacion')],
+    [btn('💰 Ingreso', 'tipo:ingreso'), btn('🏦 Aportación bote', 'tipo:aportacion')],
     [btn('🏠 Gasto comp. fijo', 'tipo:gc_fijo'), btn('🛒 Gasto comp. variable', 'tipo:gc_variable')],
     [btn('👤 Gasto FM', 'tipo:gasto_fm'), btn('👤 Gasto Lucía', 'tipo:gasto_lucia')],
-    [btn('🎯 Objetivos', 'obj:menu'), btn('👀 Últimos movimientos', 'ver:ultimos')],
-    [btn('🏆 Top gastos del mes', 'ver:top'), btn('↩ Borrar último', 'borrar:ultimo')],
-    [btn('⚙️ Cambiar objetivo de ahorro', 'cfg:objetivo')],
+    [btn('🎯 Objetivos', 'obj:menu'), btn('👀 Últimos', 'ver:ultimos')],
+    [btn('🏆 Top', 'ver:top'), btn('↩ Borrar último', 'borrar:ultimo')],
+    [btn('⚙️ Objetivo de ahorro', 'cfg:objetivo')],
   ];
   enviar(chatId, '¿Qué quieres hacer?', teclado);
 }
 
-function mostrarPersonas(chatId) {
-  enviar(chatId, '¿De quién es el ingreso?', [[btn('FM', 'persona:FM'), btn('Lucía', 'persona:Lucía')]]);
+function mostrarPersonas(chatId, tipo) {
+  const q = tipo === 'aportacion' ? '¿Quién aporta al bote?' : '¿De quién es el ingreso?';
+  enviar(chatId, q, [[btn('FM', 'persona:FM'), btn('Lucía', 'persona:Lucía')]]);
 }
 
-function mostrarCategorias(chatId, columna) {
-  const sh = _ss().getSheetByName(HOJAS.CATEGORIAS);
-  const datos = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
-  const idxCol = { 'Compartido fijo': 0, 'Compartido variable': 1, 'Individual': 2 }[columna];
-  const cats = datos.map(f => f[idxCol]).filter(Boolean);
+/**
+ * Lee categorías de Ajustes!D2:F según ámbito.
+ * Cabecera D1:F1 = Compartido fijo | Compartido variable | Individual.
+ */
+function mostrarCategorias(chatId, ambito) {
+  const sh = _ss().getSheetByName(HOJAS.AJUSTES);
+  const idxCol = { 'Compartido fijo': 0, 'Compartido variable': 1, 'Individual': 2 }[ambito];
+  let cats = [];
+  if (sh && sh.getLastRow() >= 2) {
+    const datos = sh.getRange(2, 4, sh.getLastRow() - 1, 3).getValues(); // D:F desde fila 2
+    cats = datos.map(f => f[idxCol]).filter(c => c !== '' && c != null).map(String);
+  }
   const teclado = [];
   for (let i = 0; i < cats.length; i += 2) {
     const fila = [btn(cats[i], 'cat:' + cats[i])];
     if (cats[i + 1]) fila.push(btn(cats[i + 1], 'cat:' + cats[i + 1]));
     teclado.push(fila);
   }
+  // Comodín "Otros" siempre disponible.
+  teclado.push([btn('Otros', 'cat:Otros')]);
   teclado.push([btn('« Volver', 'menu')]);
   enviar(chatId, 'Elige categoría:', teclado);
 }
@@ -279,10 +304,10 @@ function procesarImporte(chatId, texto, estado) {
   estado.importe = valor;
 
   // Para compartido variable preguntamos quién pagó antes del concepto.
-  if (estado.tipo === 'gc_variable' && !estado.pagador) {
+  if (estado.tipo === 'gc_variable' && !estado.persona) {
     guardarEstado(chatId, estado);
     return enviar(chatId, `Importe: <b>${formatoEur(valor)}</b>\n\n¿Quién lo pagó?`, [
-      [btn('Bote común', 'pagador:Bote común')],
+      [btn('Bote', 'pagador:Bote')],
       [btn('FM', 'pagador:FM'), btn('Lucía', 'pagador:Lucía')],
     ]);
   }
@@ -303,7 +328,6 @@ function pedirConfirmacion(chatId, estado) {
   lineas.push('Tipo: ' + etiquetaTipo(estado.tipo));
   if (estado.persona) lineas.push('Persona: ' + estado.persona);
   if (estado.categoria) lineas.push('Categoría: ' + estado.categoria);
-  if (estado.pagador) lineas.push('Pagado por: ' + estado.pagador);
   lineas.push('Importe: ' + formatoEur(estado.importe));
   lineas.push('Concepto: ' + estado.concepto);
 
@@ -313,249 +337,156 @@ function pedirConfirmacion(chatId, estado) {
   ]]);
 }
 
+/**
+ * Escribe TODO en Movimientos con el orden de columnas del contrato:
+ * [Fecha, Tipo, Persona, Categoría, Concepto, Importe, Nota]
+ */
 function guardarMovimiento(chatId, estado) {
   const hoy = new Date();
-  const ss = _ss();
-  let hojaDestino = '';
-  let filaEscrita = 0;
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  const tipoTxt = TIPO_TXT[estado.tipo] || estado.tipo;
+  const persona = personaMovimiento(estado, chatId);
+  const categoria = categoriaMovimiento(estado);
+  const concepto = estado.concepto || '';
 
-  switch (estado.tipo) {
-    case 'ingreso': {
-      const sh = ss.getSheetByName(HOJAS.INGRESOS);
-      sh.appendRow([hoy, estado.persona, estado.concepto, estado.importe, 'No']);
-      hojaDestino = HOJAS.INGRESOS; filaEscrita = sh.getLastRow();
-      break;
-    }
-    case 'aportacion': {
-      const sh = ss.getSheetByName(HOJAS.APORTACIONES);
-      sh.appendRow([hoy, estado.persona, estado.concepto, estado.importe]);
-      hojaDestino = HOJAS.APORTACIONES; filaEscrita = sh.getLastRow();
-      break;
-    }
-    case 'gc_fijo': {
-      const sh = ss.getSheetByName(HOJAS.GC_FIJOS);
-      sh.appendRow([hoy, estado.concepto, estado.categoria, estado.importe, hoy.getDate()]);
-      hojaDestino = HOJAS.GC_FIJOS; filaEscrita = sh.getLastRow();
-      break;
-    }
-    case 'gc_variable': {
-      const sh = ss.getSheetByName(HOJAS.GC_VARIABLES);
-      sh.appendRow([hoy, estado.concepto, estado.categoria, estado.importe, estado.pagador]);
-      hojaDestino = HOJAS.GC_VARIABLES; filaEscrita = sh.getLastRow();
-      break;
-    }
-    case 'gasto_fm': {
-      const sh = ss.getSheetByName(HOJAS.G_FM);
-      sh.appendRow([hoy, estado.concepto, estado.categoria, estado.importe]);
-      hojaDestino = HOJAS.G_FM; filaEscrita = sh.getLastRow();
-      break;
-    }
-    case 'gasto_lucia': {
-      const sh = ss.getSheetByName(HOJAS.G_LUCIA);
-      sh.appendRow([hoy, estado.concepto, estado.categoria, estado.importe]);
-      hojaDestino = HOJAS.G_LUCIA; filaEscrita = sh.getLastRow();
-      break;
-    }
-  }
+  sh.appendRow([hoy, tipoTxt, persona, categoria, concepto, estado.importe, '']);
 
-  const persona = estado.persona || estado.pagador || personaPorChat(chatId);
-  const detalle = `${formatoEur(estado.importe)} - ${estado.concepto || ''} -> ${hojaDestino}:${filaEscrita}`;
-  logBot(persona, etiquetaTipo(estado.tipo), detalle);
+  logBot(persona, tipoTxt, `${formatoEur(estado.importe)} - ${concepto || '(sin concepto)'}`);
 
   limpiarEstado(chatId);
-  enviar(chatId, `Guardado ✅\n\n<b>${formatoEur(estado.importe)}</b> — ${estado.concepto}\n\n/nuevo para añadir otro · /resumen`);
+  enviar(chatId, `Guardado ✅\n\n<b>${tipoTxt}</b> · ${persona}\n<b>${formatoEur(estado.importe)}</b>${concepto ? ' — ' + concepto : ''}\n\n/nuevo para añadir otro · /resumen`);
 
   // Notificación de gasto atípico (no bloqueante).
   try {
-    if (typeof notificacionGastoAtipico === 'function' &&
-        ['gc_fijo','gc_variable','gasto_fm','gasto_lucia'].indexOf(estado.tipo) !== -1) {
+    if (typeof notificacionGastoAtipico === 'function' && TIPOS_GASTO.indexOf(tipoTxt) !== -1) {
       notificacionGastoAtipico({
-        chatId, tipo: estado.tipo, categoria: estado.categoria,
-        importe: estado.importe, concepto: estado.concepto,
+        tipoTxt, categoria, importe: estado.importe, concepto,
       });
     }
   } catch (err) { console.error('notificacionGastoAtipico', err); }
 }
 
-/* ============== RESUMEN ============== */
+// Determina la Persona (FM/Lucía/Bote) del movimiento según el flujo.
+function personaMovimiento(estado, chatId) {
+  if (estado.persona) return estado.persona;
+  if (estado.tipo === 'gc_fijo') return 'Bote';
+  return personaPorChat(chatId);
+}
+
+// Categoría según contrato (vacía/"Aportación" para aportaciones, libre para ingresos).
+function categoriaMovimiento(estado) {
+  if (estado.tipo === 'aportacion') return estado.categoria || 'Aportación';
+  if (estado.tipo === 'ingreso') return estado.categoria || 'Otros';
+  return estado.categoria || 'Otros';
+}
+
+/* ============== RESUMEN (lee _Calc B1..B20) ============== */
 
 function enviarResumen(chatId) {
-  const ss = _ss();
-  const dash = ss.getSheetByName(HOJAS.DASHBOARD);
-  const get = (cell) => dash.getRange(cell).getValue();
-
+  const calc = _ss().getSheetByName(HOJAS.CALC);
+  if (!calc) return enviar(chatId, '⚠️ No encuentro la hoja _Calc. Ejecuta crearDashboard().');
+  const v = calc.getRange('B1:B20').getValues().map(r => Number(r[0]) || 0);
+  // Índices: B1=v[0] ... B20=v[19]
   const lineas = [
     `📊 <b>Resumen ${mesActivoConfig()}</b>`,
     '',
     `<b>Ingresos</b>`,
-    `  FM: ${formatoEur(get('B5'))}`,
-    `  Lucía: ${formatoEur(get('B6'))}`,
-    `  Total: ${formatoEur(get('B7'))}`,
+    `  FM: ${formatoEur(v[0])}`,
+    `  Lucía: ${formatoEur(v[1])}`,
+    `  Total: ${formatoEur(v[2])}`,
+    '',
+    `<b>Aportaciones al bote</b>`,
+    `  FM: ${formatoEur(v[3])}`,
+    `  Lucía: ${formatoEur(v[4])}`,
+    `  Total: ${formatoEur(v[5])}`,
     '',
     `<b>Gastos compartidos</b>`,
-    `  Fijos: ${formatoEur(get('B15'))}`,
-    `  Variables: ${formatoEur(get('B16'))}`,
-    `  Total: ${formatoEur(get('B17'))}`,
-    `  Bote – gastos: ${formatoEur(get('B18'))}`,
+    `  Fijos: ${formatoEur(v[6])}`,
+    `  Variables: ${formatoEur(v[7])}`,
+    `  Total: ${formatoEur(v[8])}`,
     '',
     `<b>Gastos individuales</b>`,
-    `  FM: ${formatoEur(get('B21'))}`,
-    `  Lucía: ${formatoEur(get('B22'))}`,
+    `  FM: ${formatoEur(v[9])}`,
+    `  Lucía: ${formatoEur(v[10])}`,
+    `  Gastos totales: ${formatoEur(v[11])}`,
     '',
-    `<b>Saldo del mes</b>`,
-    `  FM: ${formatoEur(get('B25'))}`,
-    `  Lucía: ${formatoEur(get('B26'))}`,
+    `<b>Saldos del mes</b>`,
+    `  FM: ${formatoEur(v[12])}`,
+    `  Lucía: ${formatoEur(v[13])}`,
+    `  Bote sobrante: ${formatoEur(v[14])}`,
     '',
     `<b>Ahorro</b>`,
-    `  Objetivo: ${formatoEur(get('B29'))}`,
-    `  Real: ${formatoEur(get('B30'))}`,
-    `  Acumulado año: ${formatoEur(get('B32'))}`,
+    `  Objetivo: ${formatoEur(v[15])}`,
+    `  Real: ${formatoEur(v[16])}`,
+    `  % objetivo: ${(v[17] * (v[17] <= 1 ? 100 : 1)).toFixed(0)}%`,
+    `  Acumulado año: ${formatoEur(v[18])}`,
+    `  Balance del mes: ${formatoEur(v[19])}`,
   ];
   enviar(chatId, lineas.join('\n'));
 }
 
+/* ============== RESUMEN ANUAL (agrega sobre Movimientos) ============== */
+
 function enviarResumenAnual(chatId) {
-  const ss = _ss();
   const anio = new Date().getFullYear();
-  const inicio = new Date(anio, 0, 1);
-  const fin = new Date(anio + 1, 0, 1);
-
-  const sumar = (nombre, colImp) => {
-    const sh = ss.getSheetByName(nombre);
-    if (!sh || sh.getLastRow() < 2) return 0;
-    const filas = sh.getRange(2, 1, sh.getLastRow() - 1, colImp).getValues();
-    let total = 0;
-    filas.forEach(f => {
-      const fecha = f[0];
-      if (fecha instanceof Date && fecha >= inicio && fecha < fin) total += Number(f[colImp - 1]) || 0;
-    });
-    return total;
-  };
-
-  const ingresos = sumar(HOJAS.INGRESOS, 4);
-  const gcf = sumar(HOJAS.GC_FIJOS, 4);
-  const gcv = sumar(HOJAS.GC_VARIABLES, 4);
-  const gfm = sumar(HOJAS.G_FM, 4);
-  const glu = sumar(HOJAS.G_LUCIA, 4);
-  const gastosTotal = gcf + gcv + gfm + glu;
-  const ahorro = ingresos - gastosTotal;
-
-  // Top 3 categorías del año (todos los gastos).
+  const movs = leerMovimientos();
+  let ingresos = 0, gastos = 0;
   const acumCat = {};
-  const acumular = (nombre, colCat, colImp) => {
-    const sh = ss.getSheetByName(nombre);
-    if (!sh || sh.getLastRow() < 2) return;
-    const filas = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(colCat, colImp)).getValues();
-    filas.forEach(f => {
-      const fecha = f[0];
-      if (!(fecha instanceof Date) || fecha < inicio || fecha >= fin) return;
-      const cat = f[colCat - 1] || 'Sin categoría';
-      acumCat[cat] = (acumCat[cat] || 0) + (Number(f[colImp - 1]) || 0);
-    });
-  };
-  acumular(HOJAS.GC_FIJOS, 3, 4);
-  acumular(HOJAS.GC_VARIABLES, 3, 4);
-  acumular(HOJAS.G_FM, 3, 4);
-  acumular(HOJAS.G_LUCIA, 3, 4);
-
-  const top = Object.keys(acumCat)
-    .map(k => [k, acumCat[k]])
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
+  movs.forEach(m => {
+    if (!(m.fecha instanceof Date) || m.fecha.getFullYear() !== anio) return;
+    if (m.tipo === 'Ingreso') ingresos += m.importe;
+    else if (TIPOS_GASTO.indexOf(m.tipo) !== -1) {
+      gastos += m.importe;
+      const cat = m.categoria || 'Sin categoría';
+      acumCat[cat] = (acumCat[cat] || 0) + m.importe;
+    }
+  });
+  const ahorro = ingresos - gastos;
+  const top = Object.keys(acumCat).map(k => [k, acumCat[k]]).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
   const lineas = [
     `📅 <b>Resumen anual ${anio}</b>`,
     '',
     `Ingresos: <b>${formatoEur(ingresos)}</b>`,
-    `Gastos: <b>${formatoEur(gastosTotal)}</b>`,
-    `  Comp. fijos: ${formatoEur(gcf)}`,
-    `  Comp. variables: ${formatoEur(gcv)}`,
-    `  FM: ${formatoEur(gfm)}`,
-    `  Lucía: ${formatoEur(glu)}`,
-    '',
+    `Gastos: <b>${formatoEur(gastos)}</b>`,
     `Ahorro: <b>${formatoEur(ahorro)}</b>`,
     '',
     '<b>Top 3 categorías del año</b>',
   ];
   if (top.length === 0) lineas.push('  (sin datos)');
   else top.forEach((t, i) => lineas.push(`  ${i + 1}. ${t[0]}: ${formatoEur(t[1])}`));
-
   enviar(chatId, lineas.join('\n'));
 }
 
 /* ============== ÚLTIMOS MOVIMIENTOS ============== */
 
 function enviarUltimos(chatId) {
-  const movs = recopilarUltimosMovimientos(5);
+  const movs = leerMovimientos();
   if (movs.length === 0) return enviar(chatId, 'No hay movimientos registrados todavía.');
+  // Más recientes = últimas filas. leerMovimientos devuelve en orden de hoja.
+  const ult = movs.slice(-5).reverse();
   const lineas = ['👀 <b>Últimos movimientos</b>', ''];
-  movs.forEach(m => {
-    lineas.push(`<b>${etiquetaTipo(m.tipo) || m.hoja}</b> · ${fechaCorta(m.fecha)}`);
+  ult.forEach(m => {
+    lineas.push(`<b>${m.tipo}</b> · ${m.persona} · ${fechaCorta(m.fecha)}`);
     lineas.push(`  ${m.concepto || '(sin concepto)'} — <b>${formatoEur(m.importe)}</b>`);
   });
   enviar(chatId, lineas.join('\n'));
 }
 
-function recopilarUltimosMovimientos(n) {
-  const ss = _ss();
-  const acc = [];
-  const fuentes = [
-    {hoja: HOJAS.INGRESOS, tipo: 'ingreso', fechaCol: 1, conceptoCol: 3, importeCol: 4},
-    {hoja: HOJAS.APORTACIONES, tipo: 'aportacion', fechaCol: 1, conceptoCol: 3, importeCol: 4},
-    {hoja: HOJAS.GC_FIJOS, tipo: 'gc_fijo', fechaCol: 1, conceptoCol: 2, importeCol: 4},
-    {hoja: HOJAS.GC_VARIABLES, tipo: 'gc_variable', fechaCol: 1, conceptoCol: 2, importeCol: 4},
-    {hoja: HOJAS.G_FM, tipo: 'gasto_fm', fechaCol: 1, conceptoCol: 2, importeCol: 4},
-    {hoja: HOJAS.G_LUCIA, tipo: 'gasto_lucia', fechaCol: 1, conceptoCol: 2, importeCol: 4},
-  ];
-  fuentes.forEach(src => {
-    const sh = ss.getSheetByName(src.hoja);
-    if (!sh || sh.getLastRow() < 2) return;
-    const ult = Math.min(n, sh.getLastRow() - 1);
-    const ancho = Math.max(src.fechaCol, src.conceptoCol, src.importeCol);
-    const filas = sh.getRange(sh.getLastRow() - ult + 1, 1, ult, ancho).getValues();
-    filas.forEach(f => {
-      const fecha = f[src.fechaCol - 1];
-      if (!(fecha instanceof Date)) return;
-      acc.push({
-        hoja: src.hoja,
-        tipo: src.tipo,
-        fecha,
-        concepto: f[src.conceptoCol - 1],
-        importe: Number(f[src.importeCol - 1]) || 0,
-      });
-    });
-  });
-  acc.sort((a, b) => b.fecha - a.fecha);
-  return acc.slice(0, n);
-}
-
-/* ============== TOP GASTOS DEL MES ============== */
+/* ============== TOP GASTOS DEL MES (sobre Movimientos) ============== */
 
 function enviarTopMes(chatId) {
-  const ss = _ss();
   const mes = mesActivoConfig(); // 'AAAA-MM'
   const [anio, m] = mes.split('-').map(Number);
   const inicio = new Date(anio, m - 1, 1);
   const fin = new Date(anio, m, 1);
 
   const acc = {};
-  const fuentes = [
-    {hoja: HOJAS.GC_FIJOS, catCol: 3, impCol: 4},
-    {hoja: HOJAS.GC_VARIABLES, catCol: 3, impCol: 4},
-    {hoja: HOJAS.G_FM, catCol: 3, impCol: 4},
-    {hoja: HOJAS.G_LUCIA, catCol: 3, impCol: 4},
-  ];
-  fuentes.forEach(src => {
-    const sh = ss.getSheetByName(src.hoja);
-    if (!sh || sh.getLastRow() < 2) return;
-    const ancho = Math.max(src.catCol, src.impCol);
-    const filas = sh.getRange(2, 1, sh.getLastRow() - 1, ancho).getValues();
-    filas.forEach(f => {
-      const fecha = f[0];
-      if (!(fecha instanceof Date) || fecha < inicio || fecha >= fin) return;
-      const cat = f[src.catCol - 1] || 'Sin categoría';
-      acc[cat] = (acc[cat] || 0) + (Number(f[src.impCol - 1]) || 0);
-    });
+  leerMovimientos().forEach(mov => {
+    if (TIPOS_GASTO.indexOf(mov.tipo) === -1) return;
+    if (!(mov.fecha instanceof Date) || mov.fecha < inicio || mov.fecha >= fin) return;
+    const cat = mov.categoria || 'Sin categoría';
+    acc[cat] = (acc[cat] || 0) + mov.importe;
   });
   const top = Object.keys(acc).map(k => [k, acc[k]]).sort((a, b) => b[1] - a[1]).slice(0, 5);
   if (top.length === 0) return enviar(chatId, `🏆 Sin gastos registrados en ${mes}.`);
@@ -567,73 +498,52 @@ function enviarTopMes(chatId) {
 /* ============== BORRAR ÚLTIMO ============== */
 
 function pedirConfirmacionBorrarUltimo(chatId) {
-  const ult = ultimoLogBot();
-  if (!ult) return enviar(chatId, 'No hay nada que borrar en el registro del bot.');
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || sh.getLastRow() < 2) return enviar(chatId, 'No hay movimientos que borrar.');
+  const fila = sh.getLastRow();
+  const v = sh.getRange(fila, 1, 1, 7).getValues()[0];
   enviar(chatId,
-    `¿Borrar el último movimiento?\n\n<b>${ult.accion}</b>\n${ult.detalle}\nFecha: ${fechaCorta(ult.fecha)}`,
+    `¿Borrar el último movimiento?\n\n<b>${v[1]}</b> · ${v[2]}\n${v[4] || '(sin concepto)'} — <b>${formatoEur(v[5])}</b>\nFecha: ${fechaCorta(v[0])}`,
     [[btn('✅ Sí, borrar', 'borrar:si'), btn('❌ No', 'borrar:no')]]);
 }
 
 function ejecutarBorrarUltimo(chatId) {
-  const ss = _ss();
-  const logSh = ss.getSheetByName(HOJAS.LOG_BOT);
-  if (!logSh || logSh.getLastRow() < 2) return enviar(chatId, 'No hay registro de bot que borrar.');
-  const fila = logSh.getLastRow();
-  const valores = logSh.getRange(fila, 1, 1, 4).getValues()[0];
-  const detalle = String(valores[3] || '');
-  // Detalle tiene forma: "12,34 € - concepto -> Hoja:N"
-  const m = detalle.match(/->\s*([^:]+):(\d+)\s*$/);
-  if (!m) {
-    logSh.deleteRow(fila);
-    return enviar(chatId, 'Log borrado, pero no pude identificar la fila del movimiento. Revísalo a mano.');
-  }
-  const hoja = m[1].trim();
-  const numFila = Number(m[2]);
-  const sh = ss.getSheetByName(hoja);
-  if (sh && numFila > 1 && numFila <= sh.getLastRow()) {
-    sh.deleteRow(numFila);
-  }
-  logSh.deleteRow(fila);
-  // Recalcular las referencias de filas posteriores del Log_Bot: cualquier
-  // entrada que apuntara a una fila > numFila en la misma hoja queda con un
-  // índice desplazado. Las reajustamos.
-  reindexarLogBot(hoja, numFila);
-  enviar(chatId, `Borrado ✅\n\n<b>${hoja}</b> fila ${numFila} eliminada.`);
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || sh.getLastRow() < 2) return enviar(chatId, 'No hay movimientos que borrar.');
+  const fila = sh.getLastRow();
+  const v = sh.getRange(fila, 1, 1, 7).getValues()[0];
+  sh.deleteRow(fila);
+  logBot(personaPorChat(chatId), 'Borrado', `${v[1]} · ${formatoEur(v[5])} - ${v[4] || '(sin concepto)'}`);
+  enviar(chatId, `Borrado ✅\n\n<b>${v[1]}</b> · ${v[2]}\n${v[4] || '(sin concepto)'} — <b>${formatoEur(v[5])}</b>`);
 }
 
-function reindexarLogBot(hoja, filaBorrada) {
-  const ss = _ss();
-  const logSh = ss.getSheetByName(HOJAS.LOG_BOT);
-  if (!logSh || logSh.getLastRow() < 2) return;
-  const filas = logSh.getLastRow() - 1;
-  const datos = logSh.getRange(2, 4, filas, 1).getValues();
-  let cambios = 0;
-  for (let i = 0; i < datos.length; i++) {
-    const d = String(datos[i][0] || '');
-    const mm = d.match(/->\s*([^:]+):(\d+)\s*$/);
-    if (!mm) continue;
-    if (mm[1].trim() !== hoja) continue;
-    const n = Number(mm[2]);
-    if (n > filaBorrada) {
-      const nuevo = d.replace(/->\s*([^:]+):(\d+)\s*$/, `-> ${hoja}:${n - 1}`);
-      datos[i][0] = nuevo;
-      cambios++;
-    }
-  }
-  if (cambios > 0) logSh.getRange(2, 4, filas, 1).setValues(datos);
+/* ============== LECTURA DE MOVIMIENTOS ============== */
+
+/**
+ * Devuelve todas las filas de datos de Movimientos como objetos.
+ * Orden = orden de la hoja (la última fila es la más reciente).
+ */
+function leerMovimientos() {
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || sh.getLastRow() < 2) return [];
+  const filas = sh.getRange(2, 1, sh.getLastRow() - 1, 7).getValues();
+  return filas.map((f, i) => ({
+    fila: i + 2,
+    fecha: f[0],
+    tipo: String(f[1] || ''),
+    persona: String(f[2] || ''),
+    categoria: String(f[3] || ''),
+    concepto: String(f[4] || ''),
+    importe: Number(f[5]) || 0,
+    nota: f[6],
+  })).filter(m => m.tipo);
 }
 
-function ultimoLogBot() {
-  const ss = _ss();
-  const sh = ss.getSheetByName(HOJAS.LOG_BOT);
-  if (!sh || sh.getLastRow() < 2) return null;
-  const v = sh.getRange(sh.getLastRow(), 1, 1, 4).getValues()[0];
-  return { fecha: v[0], persona: v[1], accion: v[2], detalle: v[3] };
-}
+/* ============== LOG BOT ============== */
 
 function logBot(persona, accion, detalle) {
   try {
-    const sh = _ss().getSheetByName(HOJAS.LOG_BOT);
+    const sh = _ss().getSheetByName(HOJAS.LOG);
     if (!sh) return; // si la pestaña aún no existe, no rompemos el flujo
     sh.appendRow([new Date(), persona || '', accion || '', detalle || '']);
   } catch (err) {
@@ -644,12 +554,12 @@ function logBot(persona, accion, detalle) {
 /* ============== COMANDOS RÁPIDOS ============== */
 
 /**
- * Devuelve {tipo, importe, concepto} o null.
+ * Devuelve {cmd, importe, concepto} o null.
  * Formatos:
- *   /g 12,50 cafe
- *   /gc 30 cena
- *   /i 600 nomina
- *   /a 200
+ *   /g 12,50 cafe   → gasto individual del que envía
+ *   /gc 30 cena     → gasto compartido variable (paga el bote)
+ *   /i 600 nomina   → ingreso del que envía
+ *   /a 200          → aportación al bote del que envía
  */
 function parsearComandoRapido(texto) {
   const m = texto.match(/^\/(g|gc|i|a)\s+([\d.,]+)(?:\s+(.+))?$/i);
@@ -663,57 +573,44 @@ function parsearComandoRapido(texto) {
 function ejecutarComandoRapido(chatId, c) {
   if (c._error) return enviar(chatId, c._error);
   const persona = personaPorChat(chatId);
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
   const hoy = new Date();
-  const ss = _ss();
-  let tipoEstado = '';
-  let hojaDestino = '';
-  let filaEscrita = 0;
-  let concepto = c.concepto;
+  let tipoTxt = '', mvPersona = persona, categoria = 'Otros', concepto = c.concepto;
 
   switch (c.cmd) {
-    case 'g': {
-      // Gasto individual del que envía
-      const hoja = persona === 'Lucía' ? HOJAS.G_LUCIA : HOJAS.G_FM;
-      const sh = ss.getSheetByName(hoja);
-      sh.appendRow([hoy, concepto || '(sin concepto)', 'Otros', c.importe]);
-      tipoEstado = persona === 'Lucía' ? 'gasto_lucia' : 'gasto_fm';
-      hojaDestino = hoja; filaEscrita = sh.getLastRow();
+    case 'g': // Individual del que envía
+      tipoTxt = 'Individual';
       break;
-    }
-    case 'gc': {
-      const sh = ss.getSheetByName(HOJAS.GC_VARIABLES);
-      sh.appendRow([hoy, concepto || '(sin concepto)', 'Otros', c.importe, 'Bote común']);
-      tipoEstado = 'gc_variable';
-      hojaDestino = HOJAS.GC_VARIABLES; filaEscrita = sh.getLastRow();
+    case 'gc': // Compartido variable, paga el bote
+      tipoTxt = 'Compartido variable';
+      mvPersona = 'Bote';
       break;
-    }
-    case 'i': {
-      const sh = ss.getSheetByName(HOJAS.INGRESOS);
-      sh.appendRow([hoy, persona, concepto || '(sin concepto)', c.importe, 'No']);
-      tipoEstado = 'ingreso';
-      hojaDestino = HOJAS.INGRESOS; filaEscrita = sh.getLastRow();
+    case 'i': // Ingreso del que envía
+      tipoTxt = 'Ingreso';
+      categoria = 'Otros';
       break;
-    }
-    case 'a': {
-      const sh = ss.getSheetByName(HOJAS.APORTACIONES);
-      sh.appendRow([hoy, persona, '', c.importe]);
-      tipoEstado = 'aportacion';
-      hojaDestino = HOJAS.APORTACIONES; filaEscrita = sh.getLastRow();
+    case 'a': // Aportación al bote del que envía
+      tipoTxt = 'Aportación';
+      categoria = 'Aportación';
       concepto = '';
       break;
-    }
   }
 
-  const detalle = `${formatoEur(c.importe)} - ${concepto || ''} -> ${hojaDestino}:${filaEscrita}`;
-  logBot(persona, etiquetaTipo(tipoEstado), detalle);
+  sh.appendRow([hoy, tipoTxt, mvPersona, categoria, concepto || '', c.importe, '']);
+  logBot(persona, tipoTxt, `${formatoEur(c.importe)} - ${concepto || '(sin concepto)'}`);
+  enviar(chatId, `Guardado ✅ (${tipoTxt})\n<b>${formatoEur(c.importe)}</b>${concepto ? ' — ' + concepto : ''}`);
 
-  enviar(chatId, `Guardado ✅ (${etiquetaTipo(tipoEstado)})\n<b>${formatoEur(c.importe)}</b>${concepto ? ' — ' + concepto : ''}`);
+  try {
+    if (typeof notificacionGastoAtipico === 'function' && TIPOS_GASTO.indexOf(tipoTxt) !== -1) {
+      notificacionGastoAtipico({ tipoTxt, categoria, importe: c.importe, concepto });
+    }
+  } catch (err) { console.error('notificacionGastoAtipico', err); }
 }
 
 /**
  * Devuelve "FM" o "Lucía" según el chatId.
  * Prioridad:
- *  1) Filas en Config "Chat FM" y "Chat Lucía".
+ *  1) Filas en Ajustes "Chat FM" y "Chat Lucía".
  *  2) Orden de "Telegram chat IDs autorizados" (1º=FM, 2º=Lucía).
  *  3) Fallback: FM.
  */
@@ -739,49 +636,51 @@ function mostrarMenuObjetivos(chatId) {
   ]);
 }
 
-function verObjetivosLP(chatId) {
-  const objs = leerObjetivosLP();
+function verObjetivos(chatId) {
+  const objs = leerObjetivos();
   if (objs.length === 0) return enviar(chatId, 'Aún no hay objetivos. Usa Añadir.');
   const lineas = ['🎯 <b>Objetivos</b>', ''];
   objs.forEach(o => {
     const pct = o.meta > 0 ? Math.min(1, o.aportado / o.meta) : 0;
-    lineas.push(`<b>${o.concepto}</b> — ${o.estado}`);
+    lineas.push(`<b>${o.concepto}</b>${o.estado ? ' — ' + o.estado : ''}`);
     lineas.push(`  ${barra(pct)} ${(pct * 100).toFixed(0)}%`);
-    lineas.push(`  ${formatoEur(o.aportado)} / ${formatoEur(o.meta)}` + (o.fechaObjetivo ? ` · ${fechaCorta(o.fechaObjetivo)}` : ''));
+    lineas.push(`  ${formatoEur(o.aportado)} / ${formatoEur(o.meta)}` + (o.fechaObjetivo instanceof Date ? ` · ${fechaCorta(o.fechaObjetivo)}` : ''));
     lineas.push('');
   });
   enviar(chatId, lineas.join('\n'));
 }
 
-function leerObjetivosLP() {
-  const sh = _ss().getSheetByName(HOJAS.OBJETIVOS_LP);
+/**
+ * Objetivos: A Concepto | B Meta | C Aportado | D %Progreso | E Fecha | F Estado | G Barra
+ */
+function leerObjetivos() {
+  const sh = _ss().getSheetByName(HOJAS.OBJETIVOS);
   if (!sh || sh.getLastRow() < 2) return [];
   const filas = sh.getRange(2, 1, sh.getLastRow() - 1, 7).getValues();
   return filas.map((f, i) => ({
     fila: i + 2,
-    fechaInicio: f[0],
-    concepto: f[1],
-    meta: Number(f[2]) || 0,
-    aportado: Number(f[3]) || 0,
-    porcentaje: f[4],
-    fechaObjetivo: f[5],
-    estado: f[6] || 'En curso',
+    concepto: String(f[0] || ''),
+    meta: Number(f[1]) || 0,
+    aportado: Number(f[2]) || 0,
+    porcentaje: f[3],
+    fechaObjetivo: f[4],
+    estado: f[5] || 'En curso',
   })).filter(o => o.concepto);
 }
 
-function iniciarAddObjetivoLP(chatId) {
-  guardarEstado(chatId, { tipo: 'obj_lp_add', paso: 'obj_esperar_concepto' });
+function iniciarAddObjetivo(chatId) {
+  guardarEstado(chatId, { tipo: 'obj_add', paso: 'obj_esperar_concepto' });
   enviar(chatId, '🎯 Nuevo objetivo.\n\nEscribe el <b>concepto</b> (ej: Viaje Japón):');
 }
 
-function procesarObjLPConcepto(chatId, texto, estado) {
+function procesarObjConcepto(chatId, texto, estado) {
   estado.concepto = texto.slice(0, 120);
   estado.paso = 'obj_esperar_meta';
   guardarEstado(chatId, estado);
   enviar(chatId, `Concepto: <b>${estado.concepto}</b>\n\nEscribe la <b>meta</b> en € (ej: 3000):`);
 }
 
-function procesarObjLPMeta(chatId, texto, estado) {
+function procesarObjMeta(chatId, texto, estado) {
   const v = Number(texto.replace(',', '.').replace(/[^\d.]/g, ''));
   if (!v || v <= 0) return enviar(chatId, 'Importe inválido. Escribe un número, ej: 3000');
   estado.meta = v;
@@ -790,63 +689,64 @@ function procesarObjLPMeta(chatId, texto, estado) {
   enviar(chatId, `Meta: <b>${formatoEur(v)}</b>\n\nFecha objetivo (AAAA-MM-DD) o "-" para sin fecha:`);
 }
 
-function procesarObjLPFecha(chatId, texto, estado) {
+function procesarObjFecha(chatId, texto, estado) {
   let fecha = '';
   if (texto !== '-' && texto !== '') {
     const m = texto.match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return enviar(chatId, 'Formato inválido. Usa AAAA-MM-DD o "-" para omitir.');
     fecha = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   }
-  const sh = _ss().getSheetByName(HOJAS.OBJETIVOS_LP);
+  const sh = _ss().getSheetByName(HOJAS.OBJETIVOS);
   if (!sh) {
     limpiarEstado(chatId);
-    return enviar(chatId, '⚠️ Falta la pestaña Objetivos_Largo_Plazo. Ejecuta crearDashboard().');
+    return enviar(chatId, '⚠️ Falta la pestaña Objetivos. Ejecuta crearDashboard().');
   }
-  const hoy = new Date();
-  sh.appendRow([hoy, estado.concepto, estado.meta, 0, 0, fecha || '', 'En curso']);
-  logBot(personaPorChat(chatId), 'Objetivo LP creado',
-    `${formatoEur(estado.meta)} - ${estado.concepto} -> ${HOJAS.OBJETIVOS_LP}:${sh.getLastRow()}`);
+  // appendRow [concepto, meta, 0, '', fecha, '', ''] — fórmulas D/F/G las gestiona la hoja.
+  sh.appendRow([estado.concepto, estado.meta, 0, '', fecha || '', '', '']);
+  logBot(personaPorChat(chatId), 'Objetivo creado', `${formatoEur(estado.meta)} - ${estado.concepto}`);
   limpiarEstado(chatId);
   enviar(chatId, `Objetivo creado ✅\n<b>${estado.concepto}</b> · meta ${formatoEur(estado.meta)}`);
 }
 
-function listarObjetivosLP(chatId, accion) {
-  const objs = leerObjetivosLP().filter(o => o.estado !== 'Cumplido');
+function listarObjetivos(chatId, accion) {
+  const objs = leerObjetivos().filter(o => o.estado !== 'Cumplido');
   if (objs.length === 0) return enviar(chatId, 'No hay objetivos en curso.');
   const teclado = objs.map(o => [btn(o.concepto, `obj:${accion === 'aportar' ? 'apor' : 'cump'}:${o.fila}`)]);
   teclado.push([btn('« Volver', 'obj:menu')]);
   enviar(chatId, accion === 'aportar' ? '¿A qué objetivo aportas?' : '¿Cuál marcas como cumplido?', teclado);
 }
 
-function iniciarAportarObjetivoLP(chatId, fila) {
-  guardarEstado(chatId, { tipo: 'obj_lp_aportar', paso: 'obj_esperar_aportacion', fila });
+function iniciarAportarObjetivo(chatId, fila) {
+  guardarEstado(chatId, { tipo: 'obj_aportar', paso: 'obj_esperar_aportacion', fila });
   enviar(chatId, 'Escribe el importe a aportar en € (ej: 50):');
 }
 
-function procesarObjLPAportacion(chatId, texto, estado) {
+function procesarObjAportacion(chatId, texto, estado) {
   const v = Number(texto.replace(',', '.').replace(/[^\d.]/g, ''));
   if (!v || v <= 0) return enviar(chatId, 'Importe inválido. Escribe un número, ej: 50');
-  const sh = _ss().getSheetByName(HOJAS.OBJETIVOS_LP);
+  const sh = _ss().getSheetByName(HOJAS.OBJETIVOS);
   const fila = estado.fila;
-  const valores = sh.getRange(fila, 1, 1, 7).getValues()[0];
-  const concepto = valores[1];
-  const meta = Number(valores[2]) || 0;
-  const aportadoPrev = Number(valores[3]) || 0;
+  const valores = sh.getRange(fila, 1, 1, 3).getValues()[0];
+  const concepto = valores[0];
+  const meta = Number(valores[1]) || 0;
+  const aportadoPrev = Number(valores[2]) || 0;
   const nuevo = aportadoPrev + v;
-  sh.getRange(fila, 4).setValue(nuevo);
-  if (meta > 0) sh.getRange(fila, 5).setValue(nuevo / meta);
-  logBot(personaPorChat(chatId), 'Aportación a objetivo LP',
-    `${formatoEur(v)} - ${concepto} -> ${HOJAS.OBJETIVOS_LP}:${fila}`);
+  sh.getRange(fila, 3).setValue(nuevo); // columna C Aportado
+  logBot(personaPorChat(chatId), 'Aportación a objetivo', `${formatoEur(v)} - ${concepto}`);
   limpiarEstado(chatId);
   const pct = meta > 0 ? Math.min(1, nuevo / meta) : 0;
   enviar(chatId, `Aportado ✅\n<b>${concepto}</b>\n${barra(pct)} ${(pct * 100).toFixed(0)}%\n${formatoEur(nuevo)} / ${formatoEur(meta)}`);
 }
 
 function marcarObjetivoCumplido(chatId, fila) {
-  const sh = _ss().getSheetByName(HOJAS.OBJETIVOS_LP);
-  const concepto = sh.getRange(fila, 2).getValue();
-  sh.getRange(fila, 7).setValue('Cumplido');
-  logBot(personaPorChat(chatId), 'Objetivo LP cumplido', `- ${concepto} -> ${HOJAS.OBJETIVOS_LP}:${fila}`);
+  const sh = _ss().getSheetByName(HOJAS.OBJETIVOS);
+  const valores = sh.getRange(fila, 1, 1, 2).getValues()[0];
+  const concepto = valores[0];
+  const meta = Number(valores[1]) || 0;
+  // Aportado = Meta y estado = Cumplido (la columna F puede ser fórmula; lo escribimos igualmente).
+  sh.getRange(fila, 3).setValue(meta);
+  sh.getRange(fila, 6).setValue('Cumplido');
+  logBot(personaPorChat(chatId), 'Objetivo cumplido', String(concepto));
   enviar(chatId, `🏁 <b>${concepto}</b> marcado como cumplido. ¡Enhorabuena!`);
 }
 
@@ -854,40 +754,6 @@ function barra(pct) {
   const total = 10;
   const llenos = Math.round(Math.max(0, Math.min(1, pct)) * total);
   return '█'.repeat(llenos) + '░'.repeat(total - llenos);
-}
-
-/* ============== FOTOS DE TICKETS ============== */
-
-function iniciarFoto(chatId) {
-  const ult = ultimoLogBot();
-  if (!ult) return enviar(chatId, 'No tengo movimiento reciente al que asociar la foto.');
-  guardarEstado(chatId, { tipo: 'foto_pendiente' });
-  enviar(chatId, `Envía la foto del ticket; la asociaré al último movimiento:\n<b>${ult.accion}</b> · ${ult.detalle}`);
-}
-
-function manejarFoto(chatId, msg) {
-  const estado = leerEstado(chatId);
-  if (!estado || estado.tipo !== 'foto_pendiente') {
-    return enviar(chatId, 'Recibida la foto, pero no hay /foto activo. Usa /foto antes de mandarla.');
-  }
-  const file = msg.photo[msg.photo.length - 1]; // mayor resolución
-  let url = '';
-  try {
-    const r = UrlFetchApp.fetch(API + getBotToken() + '/getFile?file_id=' + encodeURIComponent(file.file_id));
-    const j = JSON.parse(r.getContentText());
-    if (j.ok) url = 'https://api.telegram.org/file/bot' + getBotToken() + '/' + j.result.file_path;
-  } catch (err) {
-    console.error('getFile', err);
-  }
-  // Anexar al último log
-  const sh = _ss().getSheetByName(HOJAS.LOG_BOT);
-  if (sh && sh.getLastRow() >= 2) {
-    const fila = sh.getLastRow();
-    const det = sh.getRange(fila, 4).getValue();
-    sh.getRange(fila, 4).setValue(det + ' | foto: ' + (url || file.file_id));
-  }
-  limpiarEstado(chatId);
-  enviar(chatId, 'Foto asociada al último movimiento ✅');
 }
 
 /* ============== AYUDA ============== */
@@ -903,13 +769,12 @@ function enviarAyuda(chatId) {
     '/borrar_ultimo · borra el último movimiento',
     '/objetivos · objetivos a largo plazo',
     '/objetivo · cambia objetivo de ahorro mensual',
-    '/foto · asocia la siguiente foto al último gasto',
     '/cancelar · cancela el flujo actual',
     '/id · tu chat ID',
     '',
     '<b>Comandos rápidos</b>',
     '/g 12,50 cafe — gasto individual tuyo',
-    '/gc 30 cena — gasto compartido variable',
+    '/gc 30 cena — gasto compartido variable (paga el bote)',
     '/i 600 nomina — ingreso tuyo',
     '/a 200 — aportación al bote',
   ];
@@ -967,8 +832,8 @@ function etiquetaTipo(t) {
     aportacion: '🏦 Aportación al bote',
     gc_fijo: '🏠 Compartido fijo',
     gc_variable: '🛒 Compartido variable',
-    gasto_fm: '👤 Gasto FM',
-    gasto_lucia: '👤 Gasto Lucía',
+    gasto_fm: '👤 Gasto FM (Individual)',
+    gasto_lucia: '👤 Gasto Lucía (Individual)',
   })[t] || t;
 }
 

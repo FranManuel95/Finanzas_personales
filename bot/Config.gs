@@ -3,7 +3,7 @@
  * ------------------------------------------------------------------
  * Helpers de configuración: lectura de token, chat IDs autorizados y
  * referencias a las pestañas del Sheet. Toda la config sensible vive
- * en la pestaña "Config" del Sheet, no en código.
+ * en la pestaña "Ajustes" del Sheet (clave-valor en A:B), no en código.
  * ------------------------------------------------------------------
  */
 
@@ -35,7 +35,8 @@ function _ss() {
 }
 
 function _config(clave) {
-  const sh = _ss().getSheetByName(HOJAS.CONFIG);
+  const sh = _ss().getSheetByName(HOJAS.AJUSTES);
+  if (!sh || sh.getLastRow() < 2) return null;
   const datos = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
   const fila = datos.find(([k]) => k === clave);
   return fila ? fila[1] : null;
@@ -43,7 +44,7 @@ function _config(clave) {
 
 function getBotToken() {
   const t = _config('Telegram bot token');
-  if (!t) throw new Error('Falta el token de Telegram en la pestaña Config.');
+  if (!t) throw new Error('Falta el token de Telegram en la pestaña Ajustes.');
   return String(t).trim();
 }
 

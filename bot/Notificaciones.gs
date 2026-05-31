@@ -2,7 +2,8 @@
  * Notificaciones.gs
  * ------------------------------------------------------------------
  * Triggers programados y notificaciones automáticas a los chats
- * autorizados. Usa enviar() y _config() de Bot.gs / Config.gs.
+ * autorizados. Usa enviar(), _config(), formatoEur(), leerMovimientos()
+ * de Bot.gs / Config.gs y el esquema consolidado (Movimientos, _Calc, Ajustes).
  *
  * Acciones a ejecutar desde el editor:
  *  - configurarTriggers(): instala los triggers periódicos.
@@ -42,12 +43,13 @@ function eliminarTriggers() {
 /* ============== NOTIFICACIONES ============== */
 
 /**
- * Resumen del mes anterior + avance del Mes activo al mes en curso.
+ * Resumen del mes anterior (agregado sobre Movimientos) y avance del
+ * Mes activo en Ajustes al mes en curso.
+ * Se ejecuta el día 1: el "mes anterior" es el que acaba de cerrar.
  */
 function notificacionResumenMensual() {
   const ss = _ss();
   const hoy = new Date();
-  // El mes anterior (porque se ejecuta el día 1 del nuevo mes).
   const anioAnt = hoy.getMonth() === 0 ? hoy.getFullYear() - 1 : hoy.getFullYear();
   const mesAnt = hoy.getMonth() === 0 ? 12 : hoy.getMonth();
   const mesAntISO = `${anioAnt}-${String(mesAnt).padStart(2, '0')}`;
@@ -55,24 +57,13 @@ function notificacionResumenMensual() {
   const inicio = new Date(anioAnt, mesAnt - 1, 1);
   const fin = new Date(anioAnt, mesAnt, 1);
 
-  const sumar = (nombre, colImp) => {
-    const sh = ss.getSheetByName(nombre);
-    if (!sh || sh.getLastRow() < 2) return 0;
-    const filas = sh.getRange(2, 1, sh.getLastRow() - 1, colImp).getValues();
-    let total = 0;
-    filas.forEach(f => {
-      const fecha = f[0];
-      if (fecha instanceof Date && fecha >= inicio && fecha < fin) total += Number(f[colImp - 1]) || 0;
-    });
-    return total;
-  };
-
-  const ingresos = sumar(HOJAS.INGRESOS, 4);
-  const gcf = sumar(HOJAS.GC_FIJOS, 4);
-  const gcv = sumar(HOJAS.GC_VARIABLES, 4);
-  const gfm = sumar(HOJAS.G_FM, 4);
-  const glu = sumar(HOJAS.G_LUCIA, 4);
-  const gastos = gcf + gcv + gfm + glu;
+  let ingresos = 0, gastos = 0;
+  const porTipo = { 'Compartido fijo': 0, 'Compartido variable': 0, 'Individual': 0 };
+  leerMovimientos().forEach(m => {
+    if (!(m.fecha instanceof Date) || m.fecha < inicio || m.fecha >= fin) return;
+    if (m.tipo === 'Ingreso') ingresos += m.importe;
+    else if (porTipo.hasOwnProperty(m.tipo)) { porTipo[m.tipo] += m.importe; gastos += m.importe; }
+  });
   const ahorro = ingresos - gastos;
 
   const objetivo = Number(_config('Objetivo ahorro mensual conjunto (€)')) || 0;
@@ -83,21 +74,19 @@ function notificacionResumenMensual() {
     '',
     `Ingresos: ${formatoEur(ingresos)}`,
     `Gastos: ${formatoEur(gastos)}`,
-    `  Comp. fijos: ${formatoEur(gcf)}`,
-    `  Comp. variables: ${formatoEur(gcv)}`,
-    `  FM: ${formatoEur(gfm)}`,
-    `  Lucía: ${formatoEur(glu)}`,
+    `  Comp. fijos: ${formatoEur(porTipo['Compartido fijo'])}`,
+    `  Comp. variables: ${formatoEur(porTipo['Compartido variable'])}`,
+    `  Individuales: ${formatoEur(porTipo['Individual'])}`,
     '',
     `Ahorro: <b>${formatoEur(ahorro)}</b>`,
     `Objetivo: ${formatoEur(objetivo)} · cumplimiento ${(cumplido * 100).toFixed(0)}%`,
     '',
     '¡Empieza el nuevo mes! Usa /nuevo para registrar movimientos.',
   ];
-  const texto = lineas.join('\n');
 
-  // Avanzar el Mes activo al mes en curso.
+  // Avanzar el "Mes activo" en Ajustes al mes en curso.
   try {
-    const sh = ss.getSheetByName(HOJAS.CONFIG);
+    const sh = ss.getSheetByName(HOJAS.AJUSTES);
     const datos = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
     const idx = datos.findIndex(([k]) => k === 'Mes activo');
     if (idx !== -1) {
@@ -108,11 +97,12 @@ function notificacionResumenMensual() {
     console.error('No pude actualizar Mes activo', err);
   }
 
-  enviarATodos(texto);
+  enviarATodos(lineas.join('\n'));
 }
 
 /**
  * Recordatorio de revisión antes de fin de mes (día 25).
+ * Estado actual leído de _Calc (mes activo).
  */
 function notificacionRevisionPreCierre() {
   const ss = _ss();
@@ -120,17 +110,17 @@ function notificacionRevisionPreCierre() {
   const ultimoDia = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
   const dias = ultimoDia - hoy.getDate();
 
-  const dash = ss.getSheetByName(HOJAS.DASHBOARD);
+  const calc = ss.getSheetByName(HOJAS.CALC);
   let estado = '';
-  if (dash) {
-    const get = (c) => dash.getRange(c).getValue();
+  if (calc) {
+    const v = calc.getRange('B1:B20').getValues().map(r => Number(r[0]) || 0);
     estado = [
-      `Ingresos: ${formatoEur(get('B7'))}`,
-      `Gastos comp.: ${formatoEur(get('B17'))}`,
-      `Gastos FM: ${formatoEur(get('B21'))}`,
-      `Gastos Lucía: ${formatoEur(get('B22'))}`,
-      `Ahorro real: ${formatoEur(get('B30'))}`,
-      `Objetivo: ${formatoEur(get('B29'))}`,
+      `Ingresos: ${formatoEur(v[2])}`,       // B3 ingresos total
+      `Gastos comp.: ${formatoEur(v[8])}`,    // B9 GC total
+      `Gastos FM: ${formatoEur(v[9])}`,       // B10
+      `Gastos Lucía: ${formatoEur(v[10])}`,   // B11
+      `Ahorro real: ${formatoEur(v[16])}`,    // B17
+      `Objetivo: ${formatoEur(v[15])}`,       // B16
     ].join('\n');
   }
 
@@ -140,7 +130,7 @@ function notificacionRevisionPreCierre() {
     'Buen momento para repasar gastos pendientes de registrar.',
     '',
     '<b>Estado actual</b>',
-    estado || '(sin datos del dashboard)',
+    estado || '(sin datos de _Calc)',
     '',
     '/resumen para ver el detalle.',
   ];
@@ -148,42 +138,35 @@ function notificacionRevisionPreCierre() {
 }
 
 /**
- * Aviso opcional de gasto inusual. Se llama desde guardarMovimiento().
- * Compara contra la media de la categoría en los últimos 6 meses.
+ * Aviso opcional de gasto inusual. Se llama desde guardarMovimiento() /
+ * ejecutarComandoRapido(). Compara contra la media de la categoría en los
+ * últimos 6 meses, calculada sobre Movimientos.
+ * Recibe { tipoTxt, categoria, importe, concepto }.
  */
 function notificacionGastoAtipico(g) {
   if (!g || !g.categoria || !g.importe) return;
-  const hojaPorTipo = {
-    gc_fijo: HOJAS.GC_FIJOS,
-    gc_variable: HOJAS.GC_VARIABLES,
-    gasto_fm: HOJAS.G_FM,
-    gasto_lucia: HOJAS.G_LUCIA,
-  };
-  const hoja = hojaPorTipo[g.tipo];
-  if (!hoja) return;
-  const sh = _ss().getSheetByName(hoja);
-  if (!sh || sh.getLastRow() < 2) return;
+  const TIPOS = ['Compartido fijo', 'Compartido variable', 'Individual'];
+  if (TIPOS.indexOf(g.tipoTxt) === -1) return;
 
   const hoy = new Date();
   const hace6m = new Date(hoy.getFullYear(), hoy.getMonth() - 6, 1);
-  const filas = sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues();
   const importes = [];
-  filas.forEach(f => {
-    if (!(f[0] instanceof Date) || f[0] < hace6m) return;
-    if (f[2] !== g.categoria) return;
-    const v = Number(f[3]);
-    if (v > 0) importes.push(v);
+  leerMovimientos().forEach(m => {
+    if (TIPOS.indexOf(m.tipo) === -1) return;
+    if (!(m.fecha instanceof Date) || m.fecha < hace6m) return;
+    if (m.categoria !== g.categoria) return;
+    if (m.importe > 0) importes.push(m.importe);
   });
-  if (importes.length < 3) return; // sin muestra suficiente
+  if (importes.length < 3) return; // sin muestra suficiente (incluye el recién añadido)
   const media = importes.reduce((a, b) => a + b, 0) / importes.length;
   // Umbral: 2x la media y > 30€ para evitar ruido en cifras pequeñas.
   if (g.importe < 30 || g.importe < media * 2) return;
 
   const texto = [
     `⚠️ <b>Gasto inusual</b>`,
-    `${etiquetaTipo(g.tipo)} · ${g.categoria}`,
+    `${g.tipoTxt} · ${g.categoria}`,
     `Importe: <b>${formatoEur(g.importe)}</b>${g.concepto ? ' — ' + g.concepto : ''}`,
-    `Tu media en esta categoría (últimos 6 meses): ${formatoEur(media)}`,
+    `Media en esta categoría (últimos 6 meses): ${formatoEur(media)}`,
   ].join('\n');
   enviarATodos(texto);
 }
