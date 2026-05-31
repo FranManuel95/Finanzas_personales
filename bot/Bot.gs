@@ -367,11 +367,12 @@ function enviar(chatId, texto, teclado) {
     text: texto,
     parse_mode: 'HTML',
   };
-  if (teclado) payload.reply_markup = JSON.stringify({ inline_keyboard: teclado });
+  if (teclado) payload.reply_markup = { inline_keyboard: teclado };
 
   const res = UrlFetchApp.fetch(API + getBotToken() + '/sendMessage', {
     method: 'post',
-    payload: payload,
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
     muteHttpExceptions: true,
   });
   _trace('sendMessage HTTP ' + res.getResponseCode() + ' | ' + res.getContentText().substring(0, 400));
