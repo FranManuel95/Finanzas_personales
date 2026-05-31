@@ -870,10 +870,20 @@ function bloqueCompartido(sh, fila, C) {
 function pintarSubSeccionLista(sh, fila, colIni, colFin, C, etiqueta, totalFormulaRef, tipo, persona, reserva) {
   const MOV = HOJAS.MOVIMIENTOS;
   const ancho = colFin - colIni + 1;
-  // Reparto de columnas internas: concepto (5) | fecha (2) | importe (3)
-  const wConc = 5;
-  const wFech = 2;
-  const wImp  = ancho - wConc - wFech;
+  // Reparto de columnas según ancho disponible.
+  // Bloque Compartido = 10 cols (B:K). Bloques FM/Lucía = 5 cols cada uno.
+  let wConc, wFech, wImp, fmtFecha;
+  if (ancho >= 10) {
+    wConc = 5; wFech = 2; wImp = ancho - wConc - wFech;
+    fmtFecha = 'dd-mmm HH:mm';
+  } else if (ancho >= 7) {
+    wConc = 4; wFech = 1; wImp = ancho - wConc - wFech;
+    fmtFecha = 'dd-mmm';
+  } else {
+    // bloques estrechos: concepto 2 + fecha 1 + importe 2
+    wConc = 2; wFech = 1; wImp = ancho - wConc - wFech;
+    fmtFecha = 'dd-mmm';
+  }
   const cFech = colIni + wConc;
   const cImp  = cFech + wFech;
 
@@ -907,10 +917,10 @@ function pintarSubSeccionLista(sh, fila, colIni, colFin, C, etiqueta, totalFormu
       .setFormula(`=IFERROR(INDEX(${filterF};${k};1);"")`)
       .setFontSize(10).setFontColor(COLOR.tinta)
       .setVerticalAlignment('middle').setHorizontalAlignment('left');
-    // Fecha (dd-mmm HH:mm)
+    // Fecha (formato adaptado al ancho disponible)
     sh.getRange(r, cFech, 1, wFech).merge()
       .setFormula(`=IFERROR(INDEX(${filterF};${k};2);"")`)
-      .setNumberFormat('dd-mmm HH:mm')
+      .setNumberFormat(fmtFecha)
       .setFontSize(9).setFontColor(COLOR.tenue)
       .setVerticalAlignment('middle').setHorizontalAlignment('center');
     // Importe (negativo visual: es salida del bloque)
