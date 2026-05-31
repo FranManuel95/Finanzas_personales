@@ -52,6 +52,8 @@ function crearDashboard() {
 
   // Crea una pestaña temporal para evitar el error "no se pueden borrar
   // todas las hojas" cuando borramos las pestañas existentes.
+  const tmpExistente = ss.getSheetByName('__tmp_setup__');
+  if (tmpExistente) ss.deleteSheet(tmpExistente);
   const tmp = ss.insertSheet('__tmp_setup__');
 
   Object.values(HOJAS).forEach(nombre => {
