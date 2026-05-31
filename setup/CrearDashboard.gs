@@ -58,11 +58,18 @@ function crearDashboard() {
   );
   if (sobrante && ss.getSheets().length > 1) ss.deleteSheet(sobrante);
 
-  SpreadsheetApp.getUi().alert(
-    'Dashboard creado correctamente.\n\n' +
-    'Siguiente paso: revisa la pestaña "Config" y rellena tus valores ' +
-    '(mes activo, objetivo de ahorro, chat IDs de Telegram).'
-  );
+  SpreadsheetApp.flush();
+  try {
+    SpreadsheetApp.getUi().alert(
+      'Dashboard creado correctamente.\n\n' +
+      'Siguiente paso: revisa la pestaña "Config" y rellena tus valores ' +
+      '(mes activo, objetivo de ahorro, chat IDs de Telegram).'
+    );
+  } catch (e) {
+    // Si se ejecuta desde el editor sin Sheet activo, getUi() falla.
+    // No es un error real: el dashboard ya está creado.
+    console.log('Dashboard creado correctamente. Abre el Sheet para revisarlo.');
+  }
 }
 
 function recrearDashboardSeguro() {
