@@ -35,6 +35,9 @@ const TIPO_TXT = {
   gc_variable: 'Compartido variable',
   gasto_fm: 'Individual',
   gasto_lucia: 'Individual',
+  aho_compartido: 'Ahorro',
+  aho_fm: 'Ahorro',
+  aho_lucia: 'Ahorro',
 };
 
 // Tipos de gasto que cuentan para top / atípicos.
@@ -168,6 +171,16 @@ function manejarCallback(cb) {
     if (tipo === 'gasto_lucia') { estado.persona = 'Lucía'; guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Individual'); }
     if (tipo === 'gc_fijo') { estado.persona = 'Bote'; guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Compartido fijo'); }
     if (tipo === 'gc_variable') { guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Compartido variable'); }
+    // Ahorro: persona fija según botón, categoría 'Otros' por defecto, saltamos a pedir importe.
+    if (tipo === 'aho_compartido' || tipo === 'aho_fm' || tipo === 'aho_lucia') {
+      estado.persona = (tipo === 'aho_compartido') ? 'Bote' : (tipo === 'aho_fm' ? 'FM' : 'Lucía');
+      estado.categoria = 'Otros';
+      estado.paso = 'esperar_importe';
+      guardarEstado(chatId, estado);
+      const etiqueta = (tipo === 'aho_compartido') ? 'ahorro común' :
+                       (tipo === 'aho_fm') ? 'ahorro personal de FM' : 'ahorro personal de Lucía';
+      return enviar(chatId, `Tipo: <b>Ahorro</b> · ${estado.persona}\n\nEscribe el importe del ${etiqueta} en € (ej: 100):`);
+    }
   }
 
   if (data.startsWith('persona:')) {
@@ -259,6 +272,7 @@ function mostrarMenuPrincipal(chatId) {
     [btn('💰 Ingreso', 'tipo:ingreso'), btn('🏦 Aportación bote', 'tipo:aportacion')],
     [btn('🏠 Gasto comp. fijo', 'tipo:gc_fijo'), btn('🛒 Gasto comp. variable', 'tipo:gc_variable')],
     [btn('👤 Gasto FM', 'tipo:gasto_fm'), btn('👤 Gasto Lucía', 'tipo:gasto_lucia')],
+    [btn('🐷 Ahorro común', 'tipo:aho_compartido'), btn('🐷 Ahorro FM', 'tipo:aho_fm'), btn('🐷 Ahorro Lucía', 'tipo:aho_lucia')],
     [btn('🎯 Objetivos', 'obj:menu'), btn('👀 Últimos', 'ver:ultimos')],
     [btn('🏆 Top', 'ver:top'), btn('↩ Borrar último', 'borrar:ultimo')],
     [btn('⚙️ Objetivo de ahorro', 'cfg:objetivo')],
