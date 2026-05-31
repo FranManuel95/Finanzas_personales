@@ -153,6 +153,46 @@ function recrearDashboardSeguro() {
   if (r === ui.Button.YES) crearDashboard();
 }
 
+/**
+ * Borra solo los DATOS (movimientos, metas y log), conservando todo el diseño,
+ * las fórmulas y las validaciones. Úsala para empezar limpio sin regenerar el libro.
+ */
+function limpiarDatos() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let confirmar = true;
+  try {
+    const ui = SpreadsheetApp.getUi();
+    confirmar = ui.alert(
+      'Limpiar datos',
+      'Esto BORRARÁ todos los movimientos, metas y el log, pero conserva el diseño.\n\n¿Continuar?',
+      ui.ButtonSet.YES_NO
+    ) === ui.Button.YES;
+  } catch (e) { /* sin UI (ejecutado desde editor): continúa */ }
+  if (!confirmar) return;
+
+  const mov = ss.getSheetByName(HOJAS.MOVIMIENTOS);
+  if (mov && mov.getLastRow() > 1) {
+    mov.getRange(2, 1, mov.getLastRow() - 1, 7).clearContent();
+  }
+  const obj = ss.getSheetByName(HOJAS.OBJETIVOS);
+  if (obj && obj.getLastRow() > 1) {
+    const n = obj.getLastRow() - 1;
+    obj.getRange(2, 1, n, 1).clearContent(); // Concepto
+    obj.getRange(2, 2, n, 2).clearContent(); // Meta, Aportado
+    obj.getRange(2, 5, n, 1).clearContent(); // Fecha objetivo
+  }
+  const log = ss.getSheetByName(HOJAS.LOG);
+  if (log && log.getLastRow() > 1) {
+    log.getRange(2, 1, log.getLastRow() - 1, 4).clearContent();
+  }
+  SpreadsheetApp.flush();
+  try {
+    SpreadsheetApp.getUi().alert('Datos borrados. Las hojas están en limpio para empezar.');
+  } catch (e) {
+    console.log('Datos borrados.');
+  }
+}
+
 /* ====================== HOJA: AJUSTES ====================== */
 
 function crearAjustes(ss) {
@@ -270,29 +310,8 @@ function crearMovimientos(ss) {
   validarLista(sh, 'C2:C', PERSONAS);
   validarRango(sh, 'D2:D', `${HOJAS.AJUSTES}!D2:F`, true);
 
-  const hoy = new Date();
-  const y = hoy.getFullYear();
-  const m = hoy.getMonth();
-  const fDia = (dia) => new Date(y, m, dia, 0, 0);
-  const fHora = (dia, h, min) => new Date(y, m, dia, h, min);
-  const ejemplos = [
-    [fDia(1),          'Ingreso',             'FM',    'Otros',    'Nómina FM',           1850, 'Salario mensual'],
-    [fDia(1),          'Ingreso',             'Lucía', 'Otros',    'Nómina Lucía',        1620, 'Salario mensual'],
-    [fDia(2),          'Aportación',          'FM',    'Otros',    'Aportación al bote',   400, 'Parte gastos comunes'],
-    [fDia(2),          'Aportación',          'Lucía', 'Otros',    'Aportación al bote',   400, 'Parte gastos comunes'],
-    [fDia(3),          'Compartido fijo',     'Bote',  'Alquiler', 'Alquiler piso',        750, ''],
-    [fHora(8, 14, 32), 'Compartido variable', 'Bote',  'Compra',   'Supermercado',         186, 'Semana 1'],
-    [fHora(12, 21, 5), 'Individual',          'FM',    'Ocio',     'Cine',                  24, ''],
-    [fHora(15, 18, 40),'Individual',          'Lucía', 'Ropa',     'Zapatillas',            59, ''],
-    [fDia(28),         'Ahorro',              'Bote',  'Otros',    'Ahorro común mensual',  50, 'Fondo emergencia'],
-    [fDia(28),         'Ahorro',              'FM',    'Otros',    'Ahorro personal',      100, ''],
-    [fDia(28),         'Ahorro',              'Lucía', 'Otros',    'Ahorro personal',       80, ''],
-  ];
-  sh.getRange(2, 1, ejemplos.length, 7).setValues(ejemplos);
-  sh.getRange(2, 1, ejemplos.length, 1).setNumberFormat('yyyy-mm-dd HH:mm');
-  sh.getRange(2, 6, ejemplos.length, 1).setNumberFormat('#,##0.00 €');
-
-  const banda = sh.getRange(1, 1, Math.max(ejemplos.length + 1, 50), 7)
+  // Libro mayor vacío: listo para registrar datos reales (desde el bot o a mano).
+  const banda = sh.getRange(1, 1, 200, 7)
     .applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false);
   banda.setHeaderRowColor(COLOR.cab);
   banda.setFirstRowColor(COLOR.panel);
@@ -314,24 +333,8 @@ function crearObjetivos(ss) {
     .setVerticalAlignment('middle').setHorizontalAlignment('center');
   sh.setRowHeight(1, 30);
 
-  const hoy = new Date();
-  const enSeisMeses = new Date(hoy.getFullYear(), hoy.getMonth() + 6, hoy.getDate());
-  const enUnAnio = new Date(hoy.getFullYear() + 1, hoy.getMonth(), hoy.getDate());
-  const enDosAnios = new Date(hoy.getFullYear() + 2, hoy.getMonth(), hoy.getDate());
-
-  const ejemplos = [
-    ['Vacaciones',          2500, 1200, enSeisMeses],
-    ['Coche',               8000, 3000, enDosAnios],
-    ['Fondo de emergencia', 6000, 6000, enUnAnio],
-  ];
-  ejemplos.forEach((e, i) => {
-    const r = i + 2;
-    sh.getRange(r, 1).setValue(e[0]);
-    sh.getRange(r, 2).setValue(e[1]);
-    sh.getRange(r, 3).setValue(e[2]);
-    sh.getRange(r, 5).setValue(e[3]);
-  });
-
+  // Sin metas de ejemplo: rellena Concepto · Meta · Aportado · Fecha en cada fila.
+  // Las columnas % Progreso / Estado / Barra se calculan solas.
   for (let r = 2; r <= 50; r++) {
     sh.getRange(r, 4).setFormula(`=IFERROR(C${r}/B${r};0)`);
     sh.getRange(r, 6).setFormula(`=IF(B${r}="";"";IF(C${r}>=B${r};"✅ Cumplido";"En curso"))`);
