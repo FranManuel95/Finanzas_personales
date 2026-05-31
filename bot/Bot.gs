@@ -21,8 +21,21 @@ const API = 'https://api.telegram.org/bot';
 
 /* ============== ENTRADA HTTP ============== */
 
-function doGet() {
+function doGet(e) {
+  if (e && e.parameter) {
+    if (e.parameter.debug === '1') return _debugFetch('/getWebhookInfo');
+    if (e.parameter.debug === '2') return _debugFetch('/getMe');
+  }
   return ContentService.createTextOutput('Bot de finanzas activo.');
+}
+
+function _debugFetch(endpoint) {
+  try {
+    const r = UrlFetchApp.fetch(API + getBotToken() + endpoint);
+    return ContentService.createTextOutput(r.getContentText());
+  } catch (err) {
+    return ContentService.createTextOutput('Error: ' + (err && err.message ? err.message : String(err)));
+  }
 }
 
 function doPost(e) {
