@@ -133,11 +133,15 @@ function crearAjustes(ss) {
     ['Telegram chat IDs autorizados', '', 'Separa con coma. Solo estos chats pueden usar el bot.'],
     ['Telegram bot token', '', 'Pega aquí el token que te dé @BotFather.'],
     ['Modo aportación al bote', '50/50', 'Opciones: 50/50, Proporcional, Custom. Define cómo se reparten los gastos compartidos.'],
-    ['Tasa de ahorro objetivo (%)', 20, 'Referencia para el KPI de tasa de ahorro (20% es el estándar saludable).'],
+    ['Tasa de ahorro objetivo (%)', 0.2, 'Referencia para el KPI de tasa de ahorro (20% es el estándar saludable).'],
     ['Reserva de emergencia objetivo (meses)', 3, 'Meses de gastos esenciales que tu ahorro debería cubrir (3-6 estándar).'],
     ['Umbral settle-up (€)', 20, 'Solo en modo proporcional: a partir de este desvío se sugiere transferencia.'],
   ];
   sh.getRange(1, 1, params.length, 3).setValues(params);
+
+  // Forzar B2 (Mes activo) a formato texto puro para que Sheets NUNCA lo interprete como fecha.
+  // Si lo guardara como Date, LEFT/MID en _Calc devolverían el número de serie y todos los SUMIFS fallarían.
+  sh.getRange('B2').setNumberFormat('@').setValue(mesActualISO());
 
   // Cabecera
   sh.getRange('A1:C1')
@@ -153,7 +157,7 @@ function crearAjustes(ss) {
 
   // Formatos específicos por fila
   sh.getRange('B3').setNumberFormat('#,##0 €');
-  sh.getRange('B7').setNumberFormat('0"%"');
+  sh.getRange('B7').setNumberFormat('0%');             // % real, valor decimal 0..1
   sh.getRange('B8').setNumberFormat('0" meses"');
   sh.getRange('B9').setNumberFormat('#,##0 €');
 
@@ -192,8 +196,10 @@ function crearAjustes(ss) {
   sh.setHiddenGridlines(true);
   sh.getRange('A1:F60').setFontFamily(FUENTE);
 
-  sh.getRange('D14').setValue('Edita estas categorías a tu gusto. El bot y los desplegables las usan.')
-    .setFontSize(9).setFontStyle('italic').setFontColor(COLOR.tenue);
+  // Nota AYUDA fuera del rango D:F (D2:F lo apila _Calc como lista de categorías).
+  sh.getRange('A14').setValue('💡 Edita las categorías de las columnas D/E/F a tu gusto. El bot y los desplegables las usan.')
+    .setFontSize(9).setFontStyle('italic').setFontColor(COLOR.tenue)
+    .setHorizontalAlignment('left');
 }
 
 /* ====================== HOJA: MOVIMIENTOS (libro mayor único) ====================== */
@@ -344,7 +350,10 @@ function crearCalc(ss) {
   const AJ = HOJAS.AJUSTES;
 
   // Mes activo y rango de fechas del mes (según contrato).
-  const mesActivo = `VLOOKUP("Mes activo";${AJ}!A:B;2;FALSE)`;
+  // Robusto a que Sheets haya interpretado el "2026-05" como fecha: si es número (Date),
+  // lo convertimos a texto "yyyy-mm" antes de hacer LEFT/MID.
+  const mesActivoRaw = `VLOOKUP("Mes activo";${AJ}!A:B;2;FALSE)`;
+  const mesActivo = `IF(ISNUMBER(${mesActivoRaw});TEXT(${mesActivoRaw};"yyyy-mm");${mesActivoRaw})`;
   const inicioMes = `DATE(VALUE(LEFT(${mesActivo};4));VALUE(MID(${mesActivo};6;2));1)`;
   const finMes = `EOMONTH(${inicioMes};0)+1`;
 
@@ -390,7 +399,7 @@ function crearCalc(ss) {
     ['% ingreso FM al bote',              '=IFERROR(B4/B1;0)'],
     ['% ingreso Lucía al bote',           '=IFERROR(B5/B2;0)'],
     ['Tasa de ahorro del mes',            '=IFERROR(B17/B3;0)'],
-    ['Tasa de ahorro objetivo',           `=IFERROR(VLOOKUP("Tasa de ahorro objetivo (%)";${AJ}!A:B;2;FALSE)/100;0.2)`],
+    ['Tasa de ahorro objetivo',           `=IFERROR(VLOOKUP("Tasa de ahorro objetivo (%)";${AJ}!A:B;2;FALSE);0.2)`],
     ['Ingresos media 3M',                 ''], // rellenado abajo
     ['Gastos media 3M',                   ''],
     ['Ahorro media 3M',                   ''],
@@ -457,14 +466,23 @@ function crearCalc(ss) {
   );
   sh.getRange('F2:G40').setNumberFormat('#,##0.00 €');
 
-  /* ===== TOP 10 categorías ordenadas (H:J) ===== */
-  sh.getRange('H1:J1').setValues([['Categoría', 'Importe', 'Delta vs 3M']]);
-  // QUERY: solo categorías con importe>0, ordenadas desc, top 10.
+  /* ===== Delta vs media 3M por categoría (H, precalculado) ===== */
+  // Se calcula aparte para que la QUERY del top NO necesite IFERROR/aritmética en su SELECT.
+  sh.getRange('H1').setValue('Delta vs 3M');
   sh.getRange('H2').setFormula(
-    `=IFERROR(QUERY({E2:G40};"select Col1, Col2, IFERROR(Col2/Col3-1, 0) where Col2 > 0 order by Col2 desc limit 10 label Col1 '', Col2 '', IFERROR(Col2/Col3-1, 0) ''";0);"")`
+    `=ARRAYFORMULA(IF(E2:E40="";"";IFERROR(F2:F40/G2:G40-1;0)))`
   );
-  sh.getRange('I2:I11').setNumberFormat('#,##0.00 €');
-  sh.getRange('J2:J11').setNumberFormat('+0.0%;-0.0%;"="');
+  sh.getRange('H2:H40').setNumberFormat('0.0%');
+
+  /* ===== TOP 10 categorías ordenadas (I:K) ===== */
+  sh.getRange('I1:K1').setValues([['Categoría top', 'Importe top', 'Delta top']]);
+  // QUERY simple sobre {E, F, G, H}: selecciona cat, importe y delta donde importe > 0,
+  // ordena desc por importe y limita a 10. Sin IFERROR en SELECT (no es válido en QUERY).
+  sh.getRange('I2').setFormula(
+    `=IFERROR(QUERY({E2:H40};"select Col1, Col2, Col4 where Col2 > 0 order by Col2 desc limit 10";0);"")`
+  );
+  sh.getRange('J2:J11').setNumberFormat('#,##0.00 €');
+  sh.getRange('K2:K11').setNumberFormat('+0.0%;-0.0%;"="');
 
   /* ===== Series mensuales 12 meses del año activo (K:Q) ===== */
   sh.getRange('K1:Q1').setValues([['Mes', 'Ahorro', 'Acumulado', 'Ingreso', 'Gasto', 'Fijos', 'Variables']]);
@@ -608,23 +626,28 @@ function crearPanel(ss) {
     .setFontSize(9).setFontColor(COLOR.tenue)
     .setHorizontalAlignment('right').setVerticalAlignment('bottom').setBackground(COLOR.fondo);
   sh.setRowHeight(3, 22);
+  // Wrap con TEXT por si Sheets interpretara B2 como fecha (defensa en profundidad).
   sh.getRange('B3:K3').merge()
-    .setFormula(`="Resumen del mes " & VLOOKUP("Mes activo";${AJ}!A:B;2;FALSE)`)
+    .setFormula(
+      `="Resumen del mes " & IF(ISNUMBER(VLOOKUP("Mes activo";${AJ}!A:B;2;FALSE));` +
+      `TEXT(VLOOKUP("Mes activo";${AJ}!A:B;2;FALSE);"yyyy-mm");VLOOKUP("Mes activo";${AJ}!A:B;2;FALSE))`)
     .setFontSize(11).setFontColor(COLOR.tenue)
     .setVerticalAlignment('middle').setBackground(COLOR.fondo);
 
   /* ===== BLOQUE A — 5 KPI cards (filas 5-9, cols B..K en bloques de 2) ===== */
   // B:C | D:E | F:G | H:I | J:K  → 5 tarjetas de 2 cols cada una.
+  // Todos los subtextos van envueltos en IFERROR para que un cálculo todavía sin datos
+  // no rompa la tarjeta con #ERROR.
   pintarKPI(sh, 5, 2, 3,  'INGRESOS DEL MES', `=${C}!B3`,  'euro',
-    `="vs media 3M  " & TEXT(${C}!B30;"+0.0%;-0.0%;0.0%")`, 'delta');
+    `=IFERROR("vs media 3M  " & TEXT(${C}!B30;"+0.0%;-0.0%;0.0%");"")`, 'delta');
   pintarKPI(sh, 5, 4, 5,  'GASTOS DEL MES',   `=${C}!B12`, 'euro',
-    `="vs media 3M  " & TEXT(${C}!B31;"+0.0%;-0.0%;0.0%")`, 'deltaGasto');
+    `=IFERROR("vs media 3M  " & TEXT(${C}!B31;"+0.0%;-0.0%;0.0%");"")`, 'deltaGasto');
   pintarKPI(sh, 5, 6, 7,  'TASA DE AHORRO',   `=${C}!B25`, 'pct',
-    `="objetivo  " & TEXT(${C}!B26;"0%")`, 'tasaAhorro');
+    `=IFERROR("objetivo  " & TEXT(${C}!B26;"0%");"")`, 'tasaAhorro');
   pintarKPI(sh, 5, 8, 9,  'BOTE SOBRANTE',    `=${C}!B15`, 'euro',
-    `=IF(${C}!B6=0;"sin aportaciones";TEXT(${C}!B15/${C}!B6;"0.0%") & " del bote")`, 'signo');
+    `=IFERROR(IF(${C}!B6=0;"sin aportaciones";TEXT(${C}!B15/${C}!B6;"0.0%") & " del bote");"")`, 'signo');
   pintarKPI(sh, 5, 10, 11,'RESERVA EMERG.',   `=${C}!B37`, 'meses',
-    `="objetivo  " & TEXT(${C}!B38;"0") & " meses"`, 'reserva');
+    `=IFERROR("objetivo  " & TEXT(${C}!B38;"0") & " meses";"")`, 'reserva');
 
   /* ===== BLOQUE B — Reparto por persona (filas 11-16) ===== */
   etiquetaSeccion(sh, 11, 'REPARTO DEL MES POR PERSONA');
@@ -736,10 +759,21 @@ function bloquePersonas(sh, fila, C) {
       .setHorizontalAlignment(i === 0 ? 'left' : 'right');
   });
 
-  // Tres filas: FM, Lucía, Conjunto
-  filaPersona(sh, fila + 1, 'FM',       `=${C}!B1`, `=${C}!B4`, `=${C}!B10`, `=${C}!B13`, COLOR.panel);
-  filaPersona(sh, fila + 2, 'Lucía',    `=${C}!B2`, `=${C}!B5`, `=${C}!B11`, `=${C}!B14`, COLOR.cebra);
-  filaPersona(sh, fila + 3, 'Conjunto', `=${C}!B3`, `=${C}!B6`, `=${C}!B35`, `=${C}!B17`, COLOR.panel, true);
+  // Dos filas: FM y Lucía. Saldo = ingreso − aportación al bote − gastos individuales.
+  filaPersona(sh, fila + 1, 'FM',    `=${C}!B1`, `=${C}!B4`, `=${C}!B10`, `=${C}!B13`, COLOR.panel);
+  filaPersona(sh, fila + 2, 'Lucía', `=${C}!B2`, `=${C}!B5`, `=${C}!B11`, `=${C}!B14`, COLOR.cebra);
+
+  // Banda resumen: una frase con la verdad agregada del mes (no intenta cuadrar columnas).
+  const fr = fila + 3;
+  sh.setRowHeight(fr, 30);
+  sh.getRange(fr, 2, 1, 10).merge()
+    .setFormula(
+      `="Conjunto: ingresos " & TEXT(${C}!B3;"#,##0 €") & ` +
+      `"  ·  bote pagó " & TEXT(${C}!B9;"#,##0 €") & " en compartidos" & ` +
+      `"  ·  AHORRO DEL MES " & TEXT(${C}!B17;"#,##0 €")`)
+    .setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta)
+    .setBackground(COLOR.acentoSuave).setVerticalAlignment('middle').setHorizontalAlignment('center')
+    .setBorder(true, true, true, true, false, false, COLOR.acento, SpreadsheetApp.BorderStyle.SOLID);
 }
 
 function filaPersona(sh, fila, nombre, fIng, fApo, fGas, fSaldo, fondo, esTotal) {
@@ -840,38 +874,38 @@ function bloqueTopCategorias(sh, fila, C) {
       .setBorder(null, null, true, null, null, null, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
   });
 
-  // Filas 1..5 (top 5)
+  // Filas 1..5 (top 5). El top vive en _Calc!I:K (cat / importe / delta).
   for (let i = 0; i < 5; i++) {
     const r = fila + 1 + i;
-    const calcRow = 2 + i; // _Calc!H2..H6
+    const calcRow = 2 + i; // _Calc!I2..I6
     sh.setRowHeight(r, 24);
     const fondo = i % 2 === 0 ? COLOR.panel : COLOR.cebra;
     sh.getRange(r, 2, 1, 10).setBackground(fondo);
 
     // Categoría
     sh.getRange(r, 2, 1, 4).merge()
-      .setFormula(`=IFERROR(${C}!H${calcRow};"")`)
+      .setFormula(`=IFERROR(${C}!I${calcRow};"")`)
       .setFontSize(11).setFontColor(COLOR.tinta)
       .setVerticalAlignment('middle').setHorizontalAlignment('left');
 
     // Barra horizontal proporcional al top 1 (REPT con bloque Unicode)
     sh.getRange(r, 6, 1, 3).merge()
       .setFormula(
-        `=IFERROR(IF(${C}!I${calcRow}="";"";REPT("█";MAX(1;ROUND(${C}!I${calcRow}/${C}!I$2*22;0))));"")`
+        `=IFERROR(IF(${C}!J${calcRow}="";"";REPT("█";MAX(1;ROUND(${C}!J${calcRow}/${C}!J$2*22;0))));"")`
       )
       .setFontSize(10).setFontColor(COLOR.acento)
       .setVerticalAlignment('middle').setHorizontalAlignment('left');
 
     // Importe
     sh.getRange(r, 9, 1, 2).merge()
-      .setFormula(`=IFERROR(${C}!I${calcRow};"")`)
+      .setFormula(`=IFERROR(${C}!J${calcRow};"")`)
       .setNumberFormat('#,##0 €')
       .setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta)
       .setVerticalAlignment('middle').setHorizontalAlignment('right');
 
     // Delta vs 3M
     const delta = sh.getRange(r, 11)
-      .setFormula(`=IFERROR(${C}!J${calcRow};"")`)
+      .setFormula(`=IFERROR(${C}!K${calcRow};"")`)
       .setNumberFormat('+0%;-0%;"="')
       .setFontSize(10).setFontColor(COLOR.texto)
       .setVerticalAlignment('middle').setHorizontalAlignment('right');
@@ -917,13 +951,21 @@ function bloqueComposicion(sh, fila, C) {
       .setBorder(false, true, true, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
   });
 
-  // Línea de barra apilada visual (REPT) — 30 bloques totales, distribuidos según %
-  sh.getRange(fila + 3, 2, 1, 10).merge()
-    .setFormula(
-      `=REPT("█";ROUND(${C}!B32*30;0)) & REPT("█";ROUND(${C}!B33*30;0)) & REPT("█";ROUND(${C}!B34*30;0))`
-    )
+  // Barra apilada visual: 3 celdas adyacentes, una por tipo, cada una con su color.
+  // Cada celda repinta proporcionalmente al % de su tipo (B32/B33/B34).
+  // azul = fijos · naranja = variables · rojo = individuales
+  sh.getRange(fila + 3, 2, 1, 4).merge()
+    .setFormula(`=IFERROR(REPT("█";ROUND(${C}!B32*40;0));"")`)
     .setFontSize(11).setFontColor(COLOR.acento)
+    .setBackground(COLOR.fondo).setHorizontalAlignment('right').setVerticalAlignment('middle');
+  sh.getRange(fila + 3, 6, 1, 3).merge()
+    .setFormula(`=IFERROR(REPT("█";ROUND(${C}!B33*40;0));"")`)
+    .setFontSize(11).setFontColor(COLOR.naranja)
     .setBackground(COLOR.fondo).setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sh.getRange(fila + 3, 9, 1, 3).merge()
+    .setFormula(`=IFERROR(REPT("█";ROUND(${C}!B34*40;0));"")`)
+    .setFontSize(11).setFontColor(COLOR.rojo)
+    .setBackground(COLOR.fondo).setHorizontalAlignment('left').setVerticalAlignment('middle');
 }
 
 /* ---------- BLOQUE D3: Gastos individuales por persona ---------- */
