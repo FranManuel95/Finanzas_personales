@@ -22,6 +22,7 @@ const HOJAS = {
   COMPARTIDA: 'Compartida',
   FM: 'FM',
   LUCIA: 'Lucía',
+  ANUAL: 'Resumen anual',
   MOVIMIENTOS: 'Movimientos',
   OBJETIVOS: 'Objetivos',
   AJUSTES: 'Ajustes',
@@ -110,13 +111,14 @@ function crearDashboard() {
   crearHojaCompartida(ss);
   crearHojaPersona(ss, HOJAS.FM, 'Cuenta de FM', 'FM');
   crearHojaPersona(ss, HOJAS.LUCIA, 'Cuenta de Lucía', 'Lucía');
+  crearHojaAnual(ss);
 
   // Ocultar hojas internas.
   ss.getSheetByName(HOJAS.CALC).hideSheet();
   ss.getSheetByName(HOJAS.LOG).hideSheet();
 
-  // Orden de pestañas: Compartida · FM · Lucía · Movimientos · Objetivos · Ajustes.
-  ['Ajustes', 'Objetivos', 'Movimientos', HOJAS.LUCIA, HOJAS.FM, HOJAS.COMPARTIDA].forEach(n => {
+  // Orden de pestañas: Compartida · FM · Lucía · Resumen anual · Movimientos · Objetivos · Ajustes.
+  ['Ajustes', 'Objetivos', 'Movimientos', HOJAS.ANUAL, HOJAS.LUCIA, HOJAS.FM, HOJAS.COMPARTIDA].forEach(n => {
     const s = ss.getSheetByName(n);
     if (s) { ss.setActiveSheet(s); ss.moveActiveSheet(1); }
   });
@@ -656,6 +658,94 @@ function crearHojaPersona(ss, nombreHoja, titulo, persona) {
   // Donut
   r = cabeceraTabla(sh, r, 'GASTOS POR CATEGORÍA', COLOR.rosa);
   donut(sh, ss, r, donutRange);
+
+  sh.setFrozenRows(3);
+}
+
+/* ---------- HOJA: RESUMEN ANUAL ---------- */
+function crearHojaAnual(ss) {
+  const sh = ss.insertSheet(HOJAS.ANUAL);
+  const C = `'${HOJAS.CALC}'`;
+  lienzo(sh);
+  let r = tituloHoja(sh, 'Resumen Anual');
+  r += 1;
+
+  // KPI totales del año
+  tarjetaKPI(sh, r, 2, 4, 'INGRESOS AÑO', COLOR.verde, `=SUM(${C}!M2:M13)`, false);
+  tarjetaKPI(sh, r, 5, 7, 'GASTOS AÑO', COLOR.rosa, `=SUM(${C}!N2:N13)`, false);
+  tarjetaKPI(sh, r, 8, 11, 'AHORRO AÑO', COLOR.arena, `=SUM(${C}!K2:K13)`, true);
+  r += 3;
+
+  // Tabla 12 meses
+  r = cabeceraTabla(sh, r, 'EVOLUCIÓN MENSUAL', COLOR.arena);
+  // Encabezado de columnas: Mes B:C · Ingresos D:E · Gastos F:G · Ahorro H:I · Resultado J:K
+  sh.setRowHeight(r, 20);
+  sh.getRange(r, 2, 1, 10).setBackground(COLOR.cebra)
+    .setBorder(false, true, true, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+  [[2, 2, 'Mes', 'left'], [4, 5, 'Ingresos', 'right'], [6, 7, 'Gastos', 'right'],
+   [8, 9, 'Ahorro', 'right'], [10, 11, 'Resultado', 'right']].forEach(([c1, c2, txt, al]) => {
+    sh.getRange(r, c1, 1, c2 - c1 + 1).merge().setValue(txt)
+      .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.tenue)
+      .setVerticalAlignment('middle').setHorizontalAlignment(al);
+  });
+  r++;
+
+  for (let m = 0; m < 12; m++) {
+    const cr = 2 + m; // fila en _Calc (J2..J13)
+    sh.setRowHeight(r, 22);
+    const fondo = m % 2 === 0 ? COLOR.panel : COLOR.cebra;
+    sh.getRange(r, 2, 1, 10).setBackground(fondo)
+      .setBorder(false, true, false, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+    sh.getRange(r, 2, 1, 2).merge().setFormula(`=${C}!J${cr}`)
+      .setFontSize(10).setFontWeight('bold').setFontColor(COLOR.tinta).setVerticalAlignment('middle').setHorizontalAlignment('left');
+    sh.getRange(r, 4, 1, 2).merge().setFormula(`=${C}!M${cr}`).setNumberFormat('#,##0 €')
+      .setFontSize(10).setFontColor(COLOR.texto).setVerticalAlignment('middle').setHorizontalAlignment('right');
+    sh.getRange(r, 6, 1, 2).merge().setFormula(`=${C}!N${cr}`).setNumberFormat('#,##0 €')
+      .setFontSize(10).setFontColor(COLOR.texto).setVerticalAlignment('middle').setHorizontalAlignment('right');
+    sh.getRange(r, 8, 1, 2).merge().setFormula(`=${C}!K${cr}`).setNumberFormat('#,##0 €')
+      .setFontSize(10).setFontColor(COLOR.texto).setVerticalAlignment('middle').setHorizontalAlignment('right');
+    const res = sh.getRange(r, 10, 1, 2).merge().setFormula(`=${C}!M${cr}-${C}!N${cr}`).setNumberFormat('#,##0 €')
+      .setFontSize(10).setFontWeight('bold').setFontColor(COLOR.tinta).setVerticalAlignment('middle').setHorizontalAlignment('right');
+    aplicarPositivoNegativo(sh, sh.getRange(r, 10, 1, 2));
+    r++;
+  }
+
+  // Total del año
+  sh.setRowHeight(r, 26);
+  sh.getRange(r, 2, 1, 10).setBackground(COLOR.arenaClaro)
+    .setBorder(true, true, true, true, false, false, COLOR.arena, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+  sh.getRange(r, 2, 1, 2).merge().setValue('TOTAL').setFontSize(10).setFontWeight('bold').setFontColor(COLOR.tinta).setVerticalAlignment('middle');
+  sh.getRange(r, 4, 1, 2).merge().setFormula(`=SUM(${C}!M2:M13)`).setNumberFormat('#,##0 €').setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta).setVerticalAlignment('middle').setHorizontalAlignment('right');
+  sh.getRange(r, 6, 1, 2).merge().setFormula(`=SUM(${C}!N2:N13)`).setNumberFormat('#,##0 €').setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta).setVerticalAlignment('middle').setHorizontalAlignment('right');
+  sh.getRange(r, 8, 1, 2).merge().setFormula(`=SUM(${C}!K2:K13)`).setNumberFormat('#,##0 €').setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta).setVerticalAlignment('middle').setHorizontalAlignment('right');
+  sh.getRange(r, 10, 1, 2).merge().setFormula(`=SUM(${C}!M2:M13)-SUM(${C}!N2:N13)`).setNumberFormat('#,##0 €').setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta).setVerticalAlignment('middle').setHorizontalAlignment('right');
+  aplicarPositivoNegativo(sh, sh.getRange(r, 10, 1, 2));
+  r += 2;
+
+  // Gráfico anual
+  r = cabeceraTabla(sh, r, 'GRÁFICO ANUAL', COLOR.verde);
+  const calc = ss.getSheetByName(HOJAS.CALC);
+  const ch = sh.newChart().setChartType(Charts.ChartType.COMBO)
+    .addRange(calc.getRange('J1:J13'))
+    .addRange(calc.getRange('M1:M13'))
+    .addRange(calc.getRange('N1:N13'))
+    .addRange(calc.getRange('K1:K13'))
+    .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
+    .setNumHeaders(1)
+    .setOption('title', '')
+    .setOption('legend', { position: 'top', alignment: 'center', textStyle: { color: COLOR.texto, fontSize: 10, fontName: FUENTE } })
+    .setOption('series', {
+      0: { type: 'line', color: '#8FAE8B', lineWidth: 2, pointSize: 3 },
+      1: { type: 'line', color: '#E0A9A6', lineWidth: 2, pointSize: 3 },
+      2: { type: 'bars', color: '#C9B68F' },
+    })
+    .setOption('hAxis', { textStyle: { color: COLOR.tenue, fontSize: 9 } })
+    .setOption('vAxis', { textStyle: { color: COLOR.tenue, fontSize: 9 }, format: '#,##0 €', gridlines: { color: COLOR.borde } })
+    .setOption('backgroundColor', COLOR.fondo)
+    .setOption('chartArea', { left: 60, top: 40, width: '88%', height: '72%' })
+    .setOption('width', 900).setOption('height', 300)
+    .setPosition(r, 2, 0, 0).build();
+  sh.insertChart(ch);
 
   sh.setFrozenRows(3);
 }
