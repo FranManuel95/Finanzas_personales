@@ -20,11 +20,13 @@ Tabla clave-valor con los parámetros que tocas a mano:
 | Parámetro                                | Ejemplo            |
 |------------------------------------------|--------------------|
 | Mes activo                               | `2026-05`          |
-| Bote común FM (€)                        | `600`              |
-| Bote común Lucía (€)                     | `600`              |
 | Objetivo ahorro mensual conjunto (€)     | `400`              |
 | Telegram chat IDs autorizados            | `123456, 987654`   |
 | Telegram bot token                       | `1234:AAH…`        |
+
+> Las aportaciones al bote común NO son fijas: se registran como
+> movimientos desde el bot (botón 🏦) y se acumulan en la pestaña
+> `Aportaciones_Bote`.
 
 ## `Categorias`
 Tres columnas: *Compartido fijo*, *Compartido variable*, *Individual*.
@@ -32,6 +34,12 @@ Editables. Sirven de validación y como botones en el bot.
 
 ## `Ingresos`
 `Fecha | Persona (FM/Lucía) | Concepto | Importe (€) | Recurrente (Sí/No)`
+
+## `Aportaciones_Bote`
+`Fecha | Persona (FM/Lucía) | Concepto | Importe (€)`
+
+Cada vez que uno de los dos mete dinero al bote común, lo registra desde
+el bot. El Dashboard suma las aportaciones del mes activo por persona.
 
 ## `Gastos_Compartidos_Fijos`
 `Fecha | Concepto | Categoría | Importe (€) | Día de cargo`

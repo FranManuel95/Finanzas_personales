@@ -28,9 +28,11 @@ Tiempo estimado: 15 minutos.
    **Dashboard** activa.
 4. Ajusta los valores de la pestaña **Config**:
    - **Mes activo**: déjalo como está (mes actual en formato `AAAA-MM`).
-   - **Bote común FM / Lucía**: lo que cada uno aporta al mes.
-   - **Objetivo ahorro mensual conjunto**.
+   - **Objetivo ahorro mensual conjunto**: meta de ahorro al mes entre los dos.
    - Telegram bot token y chat IDs los rellenamos en los pasos siguientes.
+
+   Las aportaciones al bote común NO se ponen aquí: se registran como
+   movimientos desde el bot (botón 🏦) cada vez que uno aporta dinero.
 
 ## 4. Crea el bot de Telegram
 

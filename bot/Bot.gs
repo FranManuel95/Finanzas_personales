@@ -92,9 +92,14 @@ function manejarCallback(cb) {
   if (data.startsWith('tipo:')) {
     const tipo = data.slice(5);
     estado.tipo = tipo;
-    estado.paso = (tipo === 'ingreso') ? 'elegir_persona' : 'elegir_categoria';
     guardarEstado(chatId, estado);
-    if (tipo === 'ingreso') return mostrarPersonas(chatId, 'ingreso');
+    if (tipo === 'ingreso' || tipo === 'aportacion') {
+      estado.paso = 'elegir_persona';
+      guardarEstado(chatId, estado);
+      return mostrarPersonas(chatId, tipo);
+    }
+    estado.paso = 'elegir_categoria';
+    guardarEstado(chatId, estado);
     if (tipo === 'gasto_fm') { estado.persona = 'FM'; guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Individual'); }
     if (tipo === 'gasto_lucia') { estado.persona = 'Lucía'; guardarEstado(chatId, estado); return mostrarCategorias(chatId, 'Individual'); }
     if (tipo === 'gc_fijo') return mostrarCategorias(chatId, 'Compartido fijo');
@@ -105,7 +110,8 @@ function manejarCallback(cb) {
     estado.persona = data.slice(8);
     estado.paso = 'esperar_importe';
     guardarEstado(chatId, estado);
-    return enviar(chatId, `Persona: <b>${estado.persona}</b>\n\nEscribe el importe en € (ej: 42.50):`);
+    const verbo = estado.tipo === 'aportacion' ? 'aportación al bote' : 'ingreso';
+    return enviar(chatId, `Persona: <b>${estado.persona}</b>\n\nEscribe el importe de la ${verbo} en € (ej: 600):`);
   }
 
   if (data.startsWith('cat:')) {
@@ -141,6 +147,7 @@ function manejarCallback(cb) {
 function mostrarMenuPrincipal(chatId) {
   const teclado = [
     [btn('💰 Ingreso', 'tipo:ingreso')],
+    [btn('🏦 Aportación al bote', 'tipo:aportacion')],
     [btn('🏠 Gasto compartido fijo', 'tipo:gc_fijo'), btn('🛒 Gasto compartido variable', 'tipo:gc_variable')],
     [btn('👤 Gasto FM', 'tipo:gasto_fm'), btn('👤 Gasto Lucía', 'tipo:gasto_lucia')],
   ];
@@ -216,6 +223,9 @@ function guardarMovimiento(chatId, estado) {
   switch (estado.tipo) {
     case 'ingreso':
       ss.getSheetByName(HOJAS.INGRESOS).appendRow([hoy, estado.persona, estado.concepto, estado.importe, 'No']);
+      break;
+    case 'aportacion':
+      ss.getSheetByName(HOJAS.APORTACIONES).appendRow([hoy, estado.persona, estado.concepto, estado.importe]);
       break;
     case 'gc_fijo':
       ss.getSheetByName(HOJAS.GC_FIJOS).appendRow([hoy, estado.concepto, estado.categoria, estado.importe, hoy.getDate()]);
@@ -318,6 +328,7 @@ function btn(texto, data) { return { text: texto, callback_data: data }; }
 function etiquetaTipo(t) {
   return ({
     ingreso: '💰 Ingreso',
+    aportacion: '🏦 Aportación al bote',
     gc_fijo: '🏠 Compartido fijo',
     gc_variable: '🛒 Compartido variable',
     gasto_fm: '👤 Gasto FM',

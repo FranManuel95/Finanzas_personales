@@ -14,6 +14,7 @@ const HOJAS = {
   CONFIG: 'Config',
   CATEGORIAS: 'Categorias',
   INGRESOS: 'Ingresos',
+  APORTACIONES: 'Aportaciones_Bote',
   GC_FIJOS: 'Gastos_Compartidos_Fijos',
   GC_VARIABLES: 'Gastos_Compartidos_Variables',
   G_FM: 'Gastos_FM',
@@ -33,6 +34,7 @@ function crearDashboard() {
   crearConfig(ss);
   crearCategorias(ss);
   crearIngresos(ss);
+  crearAportaciones(ss);
   crearGastosCompartidosFijos(ss);
   crearGastosCompartidosVariables(ss);
   crearGastosIndividuales(ss, HOJAS.G_FM, 'FM');
@@ -72,8 +74,6 @@ function crearConfig(ss) {
   const filas = [
     ['Parámetro', 'Valor', 'Descripción'],
     ['Mes activo', mesActualISO(), 'Formato AAAA-MM. El Dashboard usa este mes como referencia.'],
-    ['Bote común FM (€)', 600, 'Cuánto aporta FM al bote común cada mes.'],
-    ['Bote común Lucía (€)', 600, 'Cuánto aporta Lucía al bote común cada mes.'],
     ['Objetivo ahorro mensual conjunto (€)', 400, 'Meta de ahorro del mes (ingresos - gastos).'],
     ['Telegram chat IDs autorizados', '', 'Separa con coma. Sólo estos chats pueden usar el bot.'],
     ['Telegram bot token', '', 'Pega aquí el token que te dé @BotFather.'],
@@ -122,6 +122,20 @@ function crearIngresos(ss) {
   sh.getRange('D:D').setNumberFormat('#,##0.00 €');
   validarLista(sh, 'B2:B', ['FM', 'Lucía']);
   validarLista(sh, 'E2:E', ['Sí', 'No']);
+}
+
+function crearAportaciones(ss) {
+  const sh = ss.insertSheet(HOJAS.APORTACIONES);
+  sh.getRange(1, 1, 1, 4).setValues([['Fecha', 'Persona', 'Concepto', 'Importe (€)']]);
+  sh.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#FFF2CC');
+  sh.setColumnWidths(1, 1, 110);
+  sh.setColumnWidths(2, 1, 100);
+  sh.setColumnWidths(3, 1, 280);
+  sh.setColumnWidths(4, 1, 110);
+  sh.setFrozenRows(1);
+  sh.getRange('A:A').setNumberFormat('yyyy-mm-dd');
+  sh.getRange('D:D').setNumberFormat('#,##0.00 €');
+  validarLista(sh, 'B2:B', ['FM', 'Lucía']);
 }
 
 function crearGastosCompartidosFijos(ss) {
@@ -215,6 +229,8 @@ function crearDashboardResumen(ss) {
     `IFERROR(SUMIFS(${hoja}!${rImporte};${hoja}!${rFecha};">="&${inicioMes};${hoja}!${rFecha};"<"&${finMes});0)`;
   const sumPersona = (persona) =>
     `IFERROR(SUMIFS(${HOJAS.INGRESOS}!D:D;${HOJAS.INGRESOS}!A:A;">="&${inicioMes};${HOJAS.INGRESOS}!A:A;"<"&${finMes};${HOJAS.INGRESOS}!B:B;"${persona}");0)`;
+  const sumAportacion = (persona) =>
+    `IFERROR(SUMIFS(${HOJAS.APORTACIONES}!D:D;${HOJAS.APORTACIONES}!A:A;">="&${inicioMes};${HOJAS.APORTACIONES}!A:A;"<"&${finMes};${HOJAS.APORTACIONES}!B:B;"${persona}");0)`;
 
   // Filas (empezamos a escribir en la 3):
   //  3 vacía · 4 cab Ingresos · 5 FM · 6 Lucía · 7 Total
@@ -231,8 +247,8 @@ function crearDashboardResumen(ss) {
     ['Total ingresos', '=B5+B6'],
     ['', ''],
     ['BOTE COMÚN', ''],
-    ['Aportación FM', `=VLOOKUP("Bote común FM (€)";${HOJAS.CONFIG}!A:B;2;FALSE)`],
-    ['Aportación Lucía', `=VLOOKUP("Bote común Lucía (€)";${HOJAS.CONFIG}!A:B;2;FALSE)`],
+    ['Aportación FM', `=${sumAportacion('FM')}`],
+    ['Aportación Lucía', `=${sumAportacion('Lucía')}`],
     ['Total bote común', '=B10+B11'],
     ['', ''],
     ['GASTOS COMPARTIDOS', ''],
