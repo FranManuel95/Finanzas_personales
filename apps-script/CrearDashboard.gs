@@ -428,6 +428,7 @@ function crearCalc(ss) {
   sh.getRange(1, 1, metricas.length, 2).setValues(metricas);
 
   /* ===== B21..B47: auxiliares para el Panel (el bot NO las lee) ===== */
+  // B21..B27: auxiliares contiguas.
   const extra = [
     ['% aporte real bote FM',    '=IFERROR(B4/B6;0)'],
     ['% aporte real bote Lucía', '=IFERROR(B5/B6;0)'],
@@ -436,17 +437,22 @@ function crearCalc(ss) {
     ['Tasa de ahorro real',      '=IFERROR(B17/B3;0)'],
     ['Tasa de ahorro objetivo',  `=IFERROR(VLOOKUP("Tasa de ahorro objetivo (%)";${AJ}!A:B;2;FALSE);2/10)`],
     ['Modo aportación bote',     `=IFERROR(VLOOKUP("Modo aportación al bote";${AJ}!A:B;2;FALSE);"50/50")`],
-    ['', ''], ['', ''], ['', ''], ['', ''], ['', ''], ['', ''],
-    ['', ''], ['', ''], ['', ''], ['', ''], ['', ''], ['', ''],
-    ['Ahorro compartido del mes', `=${sumar('Ahorro', 'Bote')}`],
-    ['Ahorro FM del mes',         `=${sumar('Ahorro', 'FM')}`],
-    ['Ahorro Lucía del mes',      `=${sumar('Ahorro', 'Lucía')}`],
-    ['Ahorro total del mes',      '=B41+B42+B43'],
-    ['(reservado)',               ''],
-    ['Inicio del mes activo',     `=${inicioMes}`],
-    ['Fin del mes activo',        `=${finMes}`],
   ];
   sh.getRange(21, 1, extra.length, 2).setValues(extra);
+
+  // B41..B47: por dirección explícita (evita errores de desplazamiento de fila).
+  sh.getRange('A41').setValue('Ahorro compartido del mes');
+  sh.getRange('B41').setFormula(`=${sumar('Ahorro', 'Bote')}`);
+  sh.getRange('A42').setValue('Ahorro FM del mes');
+  sh.getRange('B42').setFormula(`=${sumar('Ahorro', 'FM')}`);
+  sh.getRange('A43').setValue('Ahorro Lucía del mes');
+  sh.getRange('B43').setFormula(`=${sumar('Ahorro', 'Lucía')}`);
+  sh.getRange('A44').setValue('Ahorro total del mes');
+  sh.getRange('B44').setFormula('=B41+B42+B43');
+  sh.getRange('A46').setValue('Inicio del mes activo');
+  sh.getRange('B46').setFormula(`=${inicioMes}`);
+  sh.getRange('A47').setValue('Fin del mes activo');
+  sh.getRange('B47').setFormula(`=${finMes}`);
 
   // Formatos columna B
   sh.getRange('B1:B17').setNumberFormat('#,##0.00 €');
