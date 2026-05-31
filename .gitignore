@@ -1,0 +1,9 @@
+# Apps Script local CLI (clasp)
+.clasp.json
+.clasprc.json
+
+# Editores
+.vscode/
+.idea/
+*.swp
+.DS_Store
