@@ -1,6 +1,8 @@
 # Apps Script local CLI (clasp)
-.clasp.json
+# .clasp.json se commitea (solo tiene el scriptId, no es credencial).
+# .clasprc.json NUNCA — contiene refresh token OAuth.
 .clasprc.json
+clasprc.json
 
 # Editores
 .vscode/
