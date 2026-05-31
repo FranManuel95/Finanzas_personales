@@ -394,7 +394,7 @@ function formatoEur(v) {
 function registrarWebhook() {
   const URL_WEBAPP = ''; // <-- pega aquí la URL "/exec" de tu despliegue
   if (!URL_WEBAPP) throw new Error('Edita registrarWebhook() y pega la URL de la Web App.');
-  const r = UrlFetchApp.fetch(API + getBotToken() + '/setWebhook?url=' + encodeURIComponent(URL_WEBAPP));
+  const r = UrlFetchApp.fetch(API + getBotToken() + '/setWebhook?url=' + encodeURIComponent(URL_WEBAPP) + '&drop_pending_updates=true');
   console.log(r.getContentText());
 }
 
