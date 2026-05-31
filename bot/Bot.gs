@@ -22,45 +22,26 @@ const API = 'https://api.telegram.org/bot';
 /* ============== ENTRADA HTTP ============== */
 
 function doGet(e) {
-  if (e && e.parameter) {
-    if (e.parameter.debug === '1') return _debugFetch('/getWebhookInfo');
-    if (e.parameter.debug === '2') return _debugFetch('/getMe');
+  if (e && e.parameter && e.parameter.debug === '1') {
+    try {
+      const r = UrlFetchApp.fetch(API + getBotToken() + '/getWebhookInfo');
+      return ContentService.createTextOutput(r.getContentText());
+    } catch (err) {
+      return ContentService.createTextOutput('Error: ' + err.message);
+    }
   }
   return ContentService.createTextOutput('Bot de finanzas activo.');
 }
 
-function _debugFetch(endpoint) {
-  try {
-    const r = UrlFetchApp.fetch(API + getBotToken() + endpoint);
-    return ContentService.createTextOutput(r.getContentText());
-  } catch (err) {
-    return ContentService.createTextOutput('Error: ' + (err && err.message ? err.message : String(err)));
-  }
-}
-
 function doPost(e) {
   try {
-    _trace('doPost recibido: ' + (e && e.postData ? e.postData.contents.substring(0, 200) : 'sin postData'));
     const update = JSON.parse(e.postData.contents);
     if (update.message) manejarMensaje(update.message);
     else if (update.callback_query) manejarCallback(update.callback_query);
-    _trace('doPost completado OK');
   } catch (err) {
     console.error('doPost error', err, e && e.postData && e.postData.contents);
-    _trace('ERROR en doPost: ' + (err && err.stack ? err.stack : String(err)));
   }
   return ContentService.createTextOutput('ok');
-}
-
-function _trace(msg) {
-  try {
-    const sh = _ss().getSheetByName(HOJAS.CONFIG);
-    const fila = sh.getLastRow() + 1;
-    sh.getRange(fila, 5).setValue(new Date().toISOString());
-    sh.getRange(fila, 6).setValue(String(msg).substring(0, 500));
-  } catch (e) {
-    // si fallo aquí, no hay donde escribir
-  }
 }
 
 /* ============== MANEJO DE EVENTOS ============== */
@@ -369,13 +350,12 @@ function enviar(chatId, texto, teclado) {
   };
   if (teclado) payload.reply_markup = { inline_keyboard: teclado };
 
-  const res = UrlFetchApp.fetch(API + getBotToken() + '/sendMessage', {
+  UrlFetchApp.fetch(API + getBotToken() + '/sendMessage', {
     method: 'post',
     contentType: 'application/json',
     payload: JSON.stringify(payload),
     muteHttpExceptions: true,
   });
-  _trace('sendMessage HTTP ' + res.getResponseCode() + ' | ' + res.getContentText().substring(0, 400));
 }
 
 function responderCallback(callbackQueryId) {
