@@ -7,8 +7,31 @@
  * ------------------------------------------------------------------
  */
 
+const SHEET_ID_KEY = 'SHEET_ID';
+
+/**
+ * Guarda el ID del Sheet activo en ScriptProperties.
+ * Ejecuta esta función UNA VEZ desde el editor antes de desplegar el
+ * Web App. Sin esto, el Web App público no sabe a qué Sheet acceder.
+ */
+function inicializar() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) {
+    throw new Error('Esta función debe ejecutarse desde el editor del Sheet, no como Web App.');
+  }
+  const id = ss.getId();
+  PropertiesService.getScriptProperties().setProperty(SHEET_ID_KEY, id);
+  console.log('SHEET_ID guardado: ' + id);
+}
+
 function _ss() {
-  return SpreadsheetApp.getActiveSpreadsheet();
+  const activa = SpreadsheetApp.getActiveSpreadsheet();
+  if (activa) return activa;
+  const id = PropertiesService.getScriptProperties().getProperty(SHEET_ID_KEY);
+  if (!id) {
+    throw new Error('Falta SHEET_ID: ejecuta la función inicializar() desde el editor.');
+  }
+  return SpreadsheetApp.openById(id);
 }
 
 function _config(clave) {
