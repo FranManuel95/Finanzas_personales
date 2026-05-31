@@ -84,6 +84,16 @@ const FUENTE_TIT = 'Playfair Display'; // títulos elegantes
 
 /* ====================== ORQUESTADOR ====================== */
 
+/** Menú propio en la hoja (aparece al abrir el Sheet). */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('💰 Finanzas')
+    .addItem('🧹 Limpiar datos (empezar de cero)', 'limpiarDatos')
+    .addSeparator()
+    .addItem('🔄 Recrear libro completo', 'recrearDashboardSeguro')
+    .addToUI();
+}
+
 function crearDashboard() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
