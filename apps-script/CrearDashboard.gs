@@ -64,10 +64,10 @@ function crearDashboard() {
   if (tmpExistente) ss.deleteSheet(tmpExistente);
   const tmp = ss.insertSheet('__tmp_setup__');
 
-  // Borra las hojas del contrato si ya existían.
-  Object.values(HOJAS).forEach(nombre => {
-    const h = ss.getSheetByName(nombre);
-    if (h) ss.deleteSheet(h);
+  // Borra TODAS las hojas excepto la temporal: garantiza un libro limpio
+  // y elimina cualquier hoja vieja de esquemas anteriores.
+  ss.getSheets().forEach(h => {
+    if (h.getName() !== '__tmp_setup__') ss.deleteSheet(h);
   });
 
   // Orden lógico: primero las que otras necesitan (Ajustes, Movimientos),
