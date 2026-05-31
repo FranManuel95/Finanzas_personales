@@ -85,6 +85,7 @@ movimiento. Envía `/resumen` para ver el balance del mes en pantalla.
 |--------------|-----------------------------------------------|
 | `/nuevo`     | Empieza un nuevo registro (menú principal)    |
 | `/resumen`   | Resumen del mes activo                        |
+| `/objetivo`  | Cambia el objetivo de ahorro mensual          |
 | `/cancelar`  | Aborta el flujo actual                        |
 | `/id`        | Muestra tu chat ID                            |
 | `/menu`      | Igual que `/nuevo`                            |

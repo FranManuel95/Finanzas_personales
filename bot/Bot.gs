@@ -65,6 +65,10 @@ function manejarMensaje(msg) {
     enviar(chatId, `Tu chat ID es: <code>${chatId}</code>`);
     return;
   }
+  if (texto === '/objetivo') {
+    iniciarCambioObjetivo(chatId);
+    return;
+  }
 
   const estado = leerEstado(chatId);
   if (!estado) {
@@ -76,6 +80,7 @@ function manejarMensaje(msg) {
   switch (estado.paso) {
     case 'esperar_importe': return procesarImporte(chatId, texto, estado);
     case 'esperar_concepto': return procesarConcepto(chatId, texto, estado);
+    case 'esperar_objetivo': return procesarNuevoObjetivo(chatId, texto);
     default:
       enviar(chatId, 'Estoy esperando un botón. Si te has perdido, pulsa /cancelar.');
   }
@@ -140,6 +145,34 @@ function manejarCallback(cb) {
     limpiarEstado(chatId);
     return mostrarMenuPrincipal(chatId);
   }
+
+  if (data === 'cfg:objetivo') {
+    return iniciarCambioObjetivo(chatId);
+  }
+}
+
+function iniciarCambioObjetivo(chatId) {
+  const actual = _config('Objetivo ahorro mensual conjunto (€)');
+  guardarEstado(chatId, { tipo: 'cfg_objetivo', paso: 'esperar_objetivo' });
+  enviar(chatId, `Objetivo actual: <b>${formatoEur(actual)}</b>\n\nEscribe el nuevo objetivo de ahorro mensual en € (ej: 250):`);
+}
+
+function procesarNuevoObjetivo(chatId, texto) {
+  const limpio = texto.replace(',', '.').replace(/[^\d.]/g, '');
+  const valor = Number(limpio);
+  if (!valor || valor < 0) {
+    return enviar(chatId, 'No reconozco ese importe. Escribe un número, ej: 250');
+  }
+  const sh = _ss().getSheetByName(HOJAS.CONFIG);
+  const datos = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+  const idx = datos.findIndex(([k]) => k === 'Objetivo ahorro mensual conjunto (€)');
+  if (idx === -1) {
+    limpiarEstado(chatId);
+    return enviar(chatId, '⚠️ No encuentro la fila del objetivo en Config. Revísalo.');
+  }
+  sh.getRange(idx + 2, 2).setValue(valor);
+  limpiarEstado(chatId);
+  enviar(chatId, `Objetivo actualizado ✅\n\nNuevo objetivo: <b>${formatoEur(valor)}</b> / mes\n\n/nuevo para seguir`);
 }
 
 /* ============== FLUJO ============== */
@@ -150,8 +183,9 @@ function mostrarMenuPrincipal(chatId) {
     [btn('🏦 Aportación al bote', 'tipo:aportacion')],
     [btn('🏠 Gasto compartido fijo', 'tipo:gc_fijo'), btn('🛒 Gasto compartido variable', 'tipo:gc_variable')],
     [btn('👤 Gasto FM', 'tipo:gasto_fm'), btn('👤 Gasto Lucía', 'tipo:gasto_lucia')],
+    [btn('🎯 Cambiar objetivo de ahorro', 'cfg:objetivo')],
   ];
-  enviar(chatId, '¿Qué quieres registrar?', teclado);
+  enviar(chatId, '¿Qué quieres hacer?', teclado);
 }
 
 function mostrarPersonas(chatId) {

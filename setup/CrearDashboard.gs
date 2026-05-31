@@ -74,7 +74,7 @@ function crearConfig(ss) {
   const filas = [
     ['Parámetro', 'Valor', 'Descripción'],
     ['Mes activo', mesActualISO(), 'Formato AAAA-MM. El Dashboard usa este mes como referencia.'],
-    ['Objetivo ahorro mensual conjunto (€)', 400, 'Meta de ahorro del mes (ingresos - gastos).'],
+    ['Objetivo ahorro mensual conjunto (€)', 200, 'Meta de ahorro del mes (ingresos - gastos). Modificable desde el bot con /objetivo.'],
     ['Telegram chat IDs autorizados', '', 'Separa con coma. Sólo estos chats pueden usar el bot.'],
     ['Telegram bot token', '', 'Pega aquí el token que te dé @BotFather.'],
   ];
