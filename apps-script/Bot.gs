@@ -432,7 +432,7 @@ function enviarResumen(chatId) {
     `<b>Ahorro</b>`,
     `  Objetivo: ${formatoEur(v[15])}`,
     `  Real: ${formatoEur(v[16])}`,
-    `  % objetivo: ${(v[17] * (v[17] <= 1 ? 100 : 1)).toFixed(0)}%`,
+    `  % objetivo: ${Math.round(v[17] * 100)}%`,
     `  Acumulado año: ${formatoEur(v[18])}`,
     `  Balance del mes: ${formatoEur(v[19])}`,
   ];
