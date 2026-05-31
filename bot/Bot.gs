@@ -41,7 +41,9 @@ function doPost(e) {
   } catch (err) {
     console.error('doPost error', err, e && e.postData && e.postData.contents);
   }
-  return ContentService.createTextOutput('ok');
+  return ContentService
+    .createTextOutput(JSON.stringify({ok: true}))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 /* ============== MANEJO DE EVENTOS ============== */
