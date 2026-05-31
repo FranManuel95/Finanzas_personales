@@ -356,11 +356,12 @@ function enviar(chatId, texto, teclado) {
   };
   if (teclado) payload.reply_markup = JSON.stringify({ inline_keyboard: teclado });
 
-  UrlFetchApp.fetch(API + getBotToken() + '/sendMessage', {
+  const res = UrlFetchApp.fetch(API + getBotToken() + '/sendMessage', {
     method: 'post',
     payload: payload,
     muteHttpExceptions: true,
   });
+  _trace('sendMessage HTTP ' + res.getResponseCode() + ' | ' + res.getContentText().substring(0, 400));
 }
 
 function responderCallback(callbackQueryId) {
