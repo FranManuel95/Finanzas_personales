@@ -27,13 +27,27 @@ function doGet() {
 
 function doPost(e) {
   try {
+    _trace('doPost recibido: ' + (e && e.postData ? e.postData.contents.substring(0, 200) : 'sin postData'));
     const update = JSON.parse(e.postData.contents);
     if (update.message) manejarMensaje(update.message);
     else if (update.callback_query) manejarCallback(update.callback_query);
+    _trace('doPost completado OK');
   } catch (err) {
     console.error('doPost error', err, e && e.postData && e.postData.contents);
+    _trace('ERROR en doPost: ' + (err && err.stack ? err.stack : String(err)));
   }
   return ContentService.createTextOutput('ok');
+}
+
+function _trace(msg) {
+  try {
+    const sh = _ss().getSheetByName(HOJAS.CONFIG);
+    const fila = sh.getLastRow() + 1;
+    sh.getRange(fila, 5).setValue(new Date().toISOString());
+    sh.getRange(fila, 6).setValue(String(msg).substring(0, 500));
+  } catch (e) {
+    // si fallo aquí, no hay donde escribir
+  }
 }
 
 /* ============== MANEJO DE EVENTOS ============== */
