@@ -559,6 +559,29 @@ function crearCalc(ss) {
   sh.getRange('W2:W20').setNumberFormat('#,##0.00 €');
   sh.getRange('Y2:Y20').setNumberFormat('#,##0.00 €');
 
+  /* ===== Importe COMPARTIDO por categoría y Top 3 compartidas (Z:AC) =====
+   * Para el nuevo Panel: las top categorías del bote (fijo+variable, sin individuales).
+   */
+  sh.getRange('Z1:AA1').setValues([['Cat', 'Importe compartido']]);
+  // Z: copia de las categorías de E2:E40 para tener rango contiguo con AA en QUERY.
+  sh.getRange('Z2').setFormula(`=ARRAYFORMULA(E2:E40)`);
+  // AA: suma SOLO de Compartido fijo + Compartido variable (sin Individual).
+  sh.getRange('AA2').setFormula(
+    `=ARRAYFORMULA(IF(E2:E40="";"";` +
+    `IFERROR(SUMIFS(${MOV}!F:F;${MOV}!A:A;">="&${inicioMes};${MOV}!A:A;"<"&${finMes};` +
+    `${MOV}!D:D;E2:E40;${MOV}!B:B;"Compartido fijo");0)+` +
+    `IFERROR(SUMIFS(${MOV}!F:F;${MOV}!A:A;">="&${inicioMes};${MOV}!A:A;"<"&${finMes};` +
+    `${MOV}!D:D;E2:E40;${MOV}!B:B;"Compartido variable");0)))`
+  );
+  sh.getRange('AA2:AA40').setNumberFormat('#,##0.00 €');
+
+  // AB:AC = Top 3 categorías compartidas (cat, importe), ordenadas desc.
+  sh.getRange('AB1:AC1').setValues([['Top cat compartida', 'Importe']]);
+  sh.getRange('AB2').setFormula(
+    `=IFERROR(QUERY(Z2:AA40;"select Col1, Col2 where Col2 > 0 order by Col2 desc limit 3";0);"")`
+  );
+  sh.getRange('AC2:AC4').setNumberFormat('#,##0.00 €');
+
   // Anchos de las columnas auxiliares (todas ocultas dentro de _Calc, pero por limpieza).
   sh.setColumnWidth(5, 160);
   sh.setColumnWidth(6, 110);
@@ -649,32 +672,22 @@ function crearPanel(ss) {
   pintarKPI(sh, 5, 10, 11,'RESERVA EMERG.',   `=${C}!B37`, 'meses',
     `=IFERROR("objetivo  " & TEXT(${C}!B38;"0") & " meses";"")`, 'reserva');
 
-  /* ===== BLOQUE B — Reparto por persona (filas 11-16) ===== */
-  etiquetaSeccion(sh, 11, 'REPARTO DEL MES POR PERSONA');
-  bloquePersonas(sh, 12, C);
+  /* ===== BLOQUE B — 🤝 COMPARTIDO (bote común), ancho completo (filas 11-25) ===== */
+  etiquetaSeccion(sh, 11, '🤝  COMPARTIDO  (bote común)');
+  bloqueCompartido(sh, 12, C);
 
-  /* ===== BLOQUE C — Bote común (filas 18-22) ===== */
-  etiquetaSeccion(sh, 18, 'BOTE COMÚN');
-  bloqueBote(sh, 19, C);
+  /* ===== BLOQUE C — 👤 FM (B..F) y 👤 LUCÍA (G..K) lado a lado (filas 27-41) ===== */
+  etiquetaSeccionRango(sh, 27, 2, 6,  '👤  FM');
+  etiquetaSeccionRango(sh, 27, 7, 11, '👤  LUCÍA');
+  bloquePersona(sh, 28, 2, 6,  C, 'FM',    `=${C}!B1`, `=${C}!B4`, `=${C}!B10`, `=${C}!B13`, 'R', 'S');
+  bloquePersona(sh, 28, 7, 11, C, 'Lucía', `=${C}!B2`, `=${C}!B5`, `=${C}!B11`, `=${C}!B14`, 'T', 'U');
 
-  /* ===== BLOQUE D1 — Top categorías (filas 24-31) ===== */
-  etiquetaSeccion(sh, 24, 'TOP CATEGORÍAS DEL MES — DÓNDE SE GASTA');
-  bloqueTopCategorias(sh, 25, C);
-
-  /* ===== BLOQUE D2 — Fijos vs Variables vs Individuales (filas 33-37) ===== */
-  etiquetaSeccion(sh, 33, 'COMPOSICIÓN DEL GASTO — DÓNDE PUEDES RECORTAR');
-  bloqueComposicion(sh, 34, C);
-
-  /* ===== BLOQUE D3 — Gastos individuales por persona (filas 39-45) ===== */
-  etiquetaSeccion(sh, 39, 'GASTOS INDIVIDUALES — DÓNDE SE VA LO PERSONAL');
-  bloqueIndividuales(sh, 40, C);
-
-  /* ===== BLOQUE F — Objetivos top 3 (filas 47-51) ===== */
-  etiquetaSeccion(sh, 47, 'OBJETIVOS A LARGO PLAZO');
-  bloqueObjetivos(sh, 48);
+  /* ===== BLOQUE F — Objetivos top 3 (filas 43-47) ===== */
+  etiquetaSeccion(sh, 43, '🎯  OBJETIVOS A LARGO PLAZO');
+  bloqueObjetivos(sh, 44);
 
   /* ===== BLOQUE G — Evolución 12 meses (gráfico) ===== */
-  etiquetaSeccion(sh, 53, 'EVOLUCIÓN 12 MESES');
+  etiquetaSeccion(sh, 49, '📈  EVOLUCIÓN 12 MESES');
   insertarGraficoEvolucion(sh, ss);
 
   sh.setFrozenRows(3);
@@ -740,271 +753,224 @@ function pintarKPI(sh, fila, colIni, colFin, etiqueta, formulaValor, formato, fo
   }
 }
 
-/* ---------- BLOQUE B: Reparto por persona ---------- */
-function bloquePersonas(sh, fila, C) {
-  // Cabecera
+/* ---------- Etiqueta de sección de ANCHO PARCIAL (para títulos lado a lado) ---------- */
+function etiquetaSeccionRango(sh, fila, colIni, colFin, texto) {
   sh.setRowHeight(fila, 28);
-  const cab = [
-    [2, 3, ''],
-    [4, 5, 'Ingreso neto'],
-    [6, 7, 'Aportación bote'],
-    [8, 9, 'Gastos individuales'],
-    [10, 11, 'Saldo personal'],
-  ];
-  cab.forEach(([c1, c2, txt], i) => {
-    sh.getRange(fila, c1, 1, c2 - c1 + 1).merge()
-      .setValue(txt)
-      .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.cabTxt)
-      .setBackground(COLOR.acento).setVerticalAlignment('middle')
-      .setHorizontalAlignment(i === 0 ? 'left' : 'right');
-  });
-
-  // Dos filas: FM y Lucía. Saldo = ingreso − aportación al bote − gastos individuales.
-  filaPersona(sh, fila + 1, 'FM',    `=${C}!B1`, `=${C}!B4`, `=${C}!B10`, `=${C}!B13`, COLOR.panel);
-  filaPersona(sh, fila + 2, 'Lucía', `=${C}!B2`, `=${C}!B5`, `=${C}!B11`, `=${C}!B14`, COLOR.cebra);
-
-  // Banda resumen: una frase con la verdad agregada del mes (no intenta cuadrar columnas).
-  const fr = fila + 3;
-  sh.setRowHeight(fr, 30);
-  sh.getRange(fr, 2, 1, 10).merge()
-    .setFormula(
-      `="Conjunto: ingresos " & TEXT(${C}!B3;"#,##0 €") & ` +
-      `"  ·  bote pagó " & TEXT(${C}!B9;"#,##0 €") & " en compartidos" & ` +
-      `"  ·  AHORRO DEL MES " & TEXT(${C}!B17;"#,##0 €")`)
-    .setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta)
-    .setBackground(COLOR.acentoSuave).setVerticalAlignment('middle').setHorizontalAlignment('center')
-    .setBorder(true, true, true, true, false, false, COLOR.acento, SpreadsheetApp.BorderStyle.SOLID);
+  sh.getRange(fila, colIni, 1, colFin - colIni + 1).merge()
+    .setValue(texto)
+    .setFontSize(12).setFontWeight('bold').setFontColor(COLOR.cabTxt)
+    .setBackground(COLOR.cab).setVerticalAlignment('middle')
+    .setHorizontalAlignment('left');
 }
 
-function filaPersona(sh, fila, nombre, fIng, fApo, fGas, fSaldo, fondo, esTotal) {
-  sh.setRowHeight(fila, 30);
-  sh.getRange(fila, 2, 1, 10).setBackground(fondo)
-    .setBorder(false, false, true, false, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
-
-  sh.getRange(fila, 2, 1, 2).merge().setValue(nombre)
-    .setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta)
-    .setVerticalAlignment('middle').setHorizontalAlignment('left');
-
-  const celdas = [[4, 5, fIng], [6, 7, fApo], [8, 9, fGas], [10, 11, fSaldo]];
-  celdas.forEach(([c1, c2, f], i) => {
-    const cell = sh.getRange(fila, c1, 1, c2 - c1 + 1).merge()
-      .setFormula(f).setNumberFormat('#,##0.00 €')
-      .setFontSize(11).setFontColor(COLOR.texto)
-      .setVerticalAlignment('middle').setHorizontalAlignment('right');
-    if (i === 3) {
-      cell.setFontWeight('bold');
-      aplicarPositivoNegativo(sh, sh.getRange(fila, c1, 1, c2 - c1 + 1));
-    }
-    if (esTotal) cell.setFontWeight('bold');
-  });
-  if (esTotal) {
-    sh.getRange(fila, 2, 1, 10)
-      .setBorder(true, null, true, null, null, null, COLOR.tinta, SpreadsheetApp.BorderStyle.SOLID);
-  }
-}
-
-/* ---------- BLOQUE C: Bote común ---------- */
-function bloqueBote(sh, fila, C) {
-  // Cabecera 4 celdas
-  sh.setRowHeight(fila, 26);
-  const cab = [
-    [2, 3,  'Aportado al bote'],
-    [4, 6,  'Gastos fijos'],
-    [7, 8,  'Gastos variables'],
-    [9, 11, 'Sobrante'],
-  ];
-  cab.forEach(([c1, c2, txt]) => {
-    sh.getRange(fila, c1, 1, c2 - c1 + 1).merge()
-      .setValue(txt)
-      .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.cabTxt)
-      .setBackground(COLOR.acento).setVerticalAlignment('middle')
-      .setHorizontalAlignment('center');
-  });
-
-  // Valores
-  const fr = fila + 1;
-  sh.setRowHeight(fr, 38);
-  sh.getRange(fr, 2, 1, 10).setBackground(COLOR.panel)
-    .setBorder(false, false, true, false, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
-
-  const vals = [
-    [2, 3,  `=${C}!B6`,  false],
-    [4, 6,  `=${C}!B7`,  false],
-    [7, 8,  `=${C}!B8`,  false],
-    [9, 11, `=${C}!B15`, true],
-  ];
-  vals.forEach(([c1, c2, f, signo]) => {
-    const cell = sh.getRange(fr, c1, 1, c2 - c1 + 1).merge()
-      .setFormula(f).setNumberFormat('#,##0.00 €')
-      .setFontSize(16).setFontWeight('bold').setFontColor(COLOR.tinta)
-      .setVerticalAlignment('middle').setHorizontalAlignment('center');
-    if (signo) aplicarPositivoNegativo(sh, sh.getRange(fr, c1, 1, c2 - c1 + 1));
-  });
-
-  // Sub-texto debajo: explica el bote según modo
-  sh.setRowHeight(fr + 1, 22);
-  sh.getRange(fr + 1, 2, 1, 10).merge()
-    .setFormula(
-      `=IF(${C}!B39="50/50";` +
-      `"Modo 50/50 — cada uno aporta lo acordado. Sobrante " & TEXT(IFERROR(${C}!B15/${C}!B6;0);"0%") & " del aportado.";` +
-      `IF(${C}!B39="Proporcional";` +
-      `"Modo proporcional — FM aporta " & TEXT(${C}!B23;"0%") & " de su ingreso, Lucía " & TEXT(${C}!B24;"0%") & ".";` +
-      `"Modo custom — ratio definido manualmente."))`)
-    .setFontSize(10).setFontColor(COLOR.tenue)
-    .setVerticalAlignment('middle').setHorizontalAlignment('center')
-    .setBackground(COLOR.fondo);
-}
-
-/* ---------- BLOQUE D1: Top 5 categorías ---------- */
-function bloqueTopCategorias(sh, fila, C) {
-  // Cabecera
+/* ---------- BLOQUE COMPARTIDO (ancho completo B:K) ----------
+ * Layout vertical (14 filas a partir de `fila`):
+ *   fila   0  : sub-cabeceras "APORTACIONES AL BOTE" | "GASTOS DEL BOTE"
+ *   fila   1-3: 3 filas dato (FM/Lucía/Total) | (Fijos/Variables/Total)
+ *   fila   5  : SOBRANTE DEL BOTE — número grande ocupando todo
+ *   fila   7  : etiqueta "Top categorías del bote"
+ *   fila   8-10: 3 filas top categorías compartidas (cat / barra / importe)
+ */
+function bloqueCompartido(sh, fila, C) {
+  // === fila 0 — Sub-cabeceras lado a lado (B:E = aportes, G:K = gastos; F separador) ===
   sh.setRowHeight(fila, 24);
-  const cab = [
-    [2, 5,  'Categoría'],
-    [6, 8,  'Barra'],
-    [9, 10, 'Importe'],
-    [11, 11,'vs 3M'],
-  ];
-  cab.forEach(([c1, c2, txt], i) => {
-    sh.getRange(fila, c1, 1, c2 - c1 + 1).merge()
-      .setValue(txt)
-      .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.tenue)
-      .setBackground(COLOR.fondo).setVerticalAlignment('middle')
-      .setHorizontalAlignment(i === 0 ? 'left' : (i === 1 ? 'left' : 'right'))
-      .setBorder(null, null, true, null, null, null, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
-  });
+  sh.getRange(fila, 2, 1, 4).merge()
+    .setValue('APORTACIONES AL BOTE')
+    .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.cabTxt)
+    .setBackground(COLOR.acento).setVerticalAlignment('middle')
+    .setHorizontalAlignment('center');
+  sh.getRange(fila, 7, 1, 5).merge()
+    .setValue('GASTOS DEL BOTE')
+    .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.cabTxt)
+    .setBackground(COLOR.acento).setVerticalAlignment('middle')
+    .setHorizontalAlignment('center');
 
-  // Filas 1..5 (top 5). El top vive en _Calc!I:K (cat / importe / delta).
-  for (let i = 0; i < 5; i++) {
+  // === filas 1-3 — Datos lado a lado ===
+  // Izquierda: FM | Lucía | TOTAL APORTADO     Derecha: Fijos | Variables | TOTAL DEL BOTE
+  const filasDatos = [
+    ['FM',    `=${C}!B4`, false, 'Fijos',     `=${C}!B7`, false],
+    ['Lucía', `=${C}!B5`, false, 'Variables', `=${C}!B8`, false],
+    ['TOTAL APORTADO', `=${C}!B6`, true,  'TOTAL DEL BOTE', `=${C}!B9`, true],
+  ];
+  filasDatos.forEach(([lblL, fL, totL, lblR, fR, totR], i) => {
     const r = fila + 1 + i;
-    const calcRow = 2 + i; // _Calc!I2..I6
-    sh.setRowHeight(r, 24);
-    const fondo = i % 2 === 0 ? COLOR.panel : COLOR.cebra;
+    sh.setRowHeight(r, 26);
+    const fondo = totL ? COLOR.acentoSuave : (i % 2 === 0 ? COLOR.panel : COLOR.cebra);
     sh.getRange(r, 2, 1, 10).setBackground(fondo);
 
-    // Categoría
-    sh.getRange(r, 2, 1, 4).merge()
-      .setFormula(`=IFERROR(${C}!I${calcRow};"")`)
+    // Izquierda: etiqueta B:C | valor D:E
+    sh.getRange(r, 2, 1, 2).merge().setValue(lblL)
+      .setFontSize(11).setFontWeight(totL ? 'bold' : 'normal')
+      .setFontColor(COLOR.tinta).setVerticalAlignment('middle')
+      .setHorizontalAlignment('left');
+    sh.getRange(r, 4, 1, 2).merge().setFormula(fL).setNumberFormat('#,##0.00 €')
+      .setFontSize(12).setFontWeight(totL ? 'bold' : 'normal')
+      .setFontColor(COLOR.tinta).setVerticalAlignment('middle')
+      .setHorizontalAlignment('right');
+
+    // Derecha: etiqueta G:H | valor I:K
+    sh.getRange(r, 7, 1, 2).merge().setValue(lblR)
+      .setFontSize(11).setFontWeight(totR ? 'bold' : 'normal')
+      .setFontColor(COLOR.tinta).setVerticalAlignment('middle')
+      .setHorizontalAlignment('left');
+    sh.getRange(r, 9, 1, 3).merge().setFormula(fR).setNumberFormat('#,##0.00 €')
+      .setFontSize(12).setFontWeight(totR ? 'bold' : 'normal')
+      .setFontColor(COLOR.tinta).setVerticalAlignment('middle')
+      .setHorizontalAlignment('right');
+
+    // Borde inferior bajo la fila TOTAL
+    if (totL) {
+      sh.getRange(r, 2, 1, 10)
+        .setBorder(true, null, true, null, null, null, COLOR.acento, SpreadsheetApp.BorderStyle.SOLID);
+    }
+  });
+
+  // === fila 5 — SOBRANTE DEL BOTE: número grande ocupando todo el bloque ===
+  const frSob = fila + 4;
+  sh.setRowHeight(frSob, 16);
+  sh.getRange(frSob, 2, 1, 10).setBackground(COLOR.fondo);
+
+  const frSobVal = fila + 5;
+  sh.setRowHeight(frSobVal, 44);
+  sh.getRange(frSobVal, 2, 1, 4).merge()
+    .setValue('SOBRANTE DEL BOTE')
+    .setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tenue)
+    .setBackground(COLOR.panel).setVerticalAlignment('middle').setHorizontalAlignment('right')
+    .setBorder(true, true, true, false, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+  const sobCell = sh.getRange(frSobVal, 6, 1, 3).merge()
+    .setFormula(`=${C}!B15`).setNumberFormat('#,##0.00 €')
+    .setFontSize(22).setFontWeight('bold')
+    .setBackground(COLOR.panel).setVerticalAlignment('middle').setHorizontalAlignment('left')
+    .setBorder(true, false, true, false, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+  aplicarPositivoNegativo(sh, sh.getRange(frSobVal, 6, 1, 3));
+  // Sub-texto a la derecha: "X% del aportado" o aviso
+  sh.getRange(frSobVal, 9, 1, 3).merge()
+    .setFormula(
+      `=IFERROR(IF(${C}!B6=0;"sin aportaciones aún";` +
+      `IF(${C}!B15<0;"⚠ déficit · gastasteis " & TEXT(ABS(${C}!B15/${C}!B6);"0%") & " más";` +
+      `TEXT(${C}!B15/${C}!B6;"0%") & " del aportado");"")`)
+    .setFontSize(10).setFontColor(COLOR.tenue)
+    .setBackground(COLOR.panel).setVerticalAlignment('middle').setHorizontalAlignment('left')
+    .setBorder(true, false, true, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+
+  // === fila 7 — etiqueta "Top categorías compartidas" ===
+  const frTopTitle = fila + 6;
+  sh.setRowHeight(frTopTitle, 24);
+  sh.getRange(frTopTitle, 2, 1, 10).merge()
+    .setValue('TOP CATEGORÍAS DEL BOTE')
+    .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.tenue)
+    .setBackground(COLOR.fondo).setVerticalAlignment('bottom').setHorizontalAlignment('left');
+
+  // === filas 8-10 — Top 3 compartidas (cat | barra | importe) ===
+  for (let i = 0; i < 3; i++) {
+    const r = fila + 7 + i;
+    const cr = 2 + i; // _Calc!AB2..AB4
+    sh.setRowHeight(r, 24);
+    const fondo = i % 2 === 0 ? COLOR.panel : COLOR.cebra;
+    sh.getRange(r, 2, 1, 10).setBackground(fondo)
+      .setBorder(false, false, true, false, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+
+    // Categoría (B:D)
+    sh.getRange(r, 2, 1, 3).merge()
+      .setFormula(`=IFERROR(${C}!AB${cr};"—")`)
       .setFontSize(11).setFontColor(COLOR.tinta)
       .setVerticalAlignment('middle').setHorizontalAlignment('left');
-
-    // Barra horizontal proporcional al top 1 (REPT con bloque Unicode)
-    sh.getRange(r, 6, 1, 3).merge()
+    // Barra (E:I), proporcional al top 1 (_Calc!AC$2)
+    sh.getRange(r, 5, 1, 5).merge()
       .setFormula(
-        `=IFERROR(IF(${C}!J${calcRow}="";"";REPT("█";MAX(1;ROUND(${C}!J${calcRow}/${C}!J$2*22;0))));"")`
+        `=IFERROR(IF(${C}!AC${cr}="";"";REPT("█";MAX(1;ROUND(${C}!AC${cr}/${C}!AC$2*30;0))));"")`
       )
       .setFontSize(10).setFontColor(COLOR.acento)
       .setVerticalAlignment('middle').setHorizontalAlignment('left');
-
-    // Importe
-    sh.getRange(r, 9, 1, 2).merge()
-      .setFormula(`=IFERROR(${C}!J${calcRow};"")`)
+    // Importe (J:K)
+    sh.getRange(r, 10, 1, 2).merge()
+      .setFormula(`=IFERROR(${C}!AC${cr};"")`)
       .setNumberFormat('#,##0 €')
       .setFontSize(11).setFontWeight('bold').setFontColor(COLOR.tinta)
       .setVerticalAlignment('middle').setHorizontalAlignment('right');
-
-    // Delta vs 3M
-    const delta = sh.getRange(r, 11)
-      .setFormula(`=IFERROR(${C}!K${calcRow};"")`)
-      .setNumberFormat('+0%;-0%;"="')
-      .setFontSize(10).setFontColor(COLOR.texto)
-      .setVerticalAlignment('middle').setHorizontalAlignment('right');
-    aplicarDeltaGasto(sh, delta);
   }
-
-  // Borde inferior bajo la tabla
-  sh.getRange(fila + 5, 2, 1, 10)
-    .setBorder(null, null, true, null, null, null, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
 }
 
-/* ---------- BLOQUE D2: Composición fijos/variables/individuales ---------- */
-function bloqueComposicion(sh, fila, C) {
-  // Tres celdas-stack horizontales mostrando % y €, una al lado de otra.
-  sh.setRowHeight(fila, 22);
-  sh.setRowHeight(fila + 1, 34);
-  sh.setRowHeight(fila + 2, 20);
-  sh.setRowHeight(fila + 3, 24);
+/* ---------- BLOQUE PERSONA (medio ancho: B:F o G:K) ----------
+ * Layout vertical (10 filas a partir de `fila`):
+ *   fila   0-3 : 4 líneas resumen (Ingresos / − Bote / − Gastos / EN BOLSILLO)
+ *   fila   5   : etiqueta "Sus gastos individuales (top 3)"
+ *   fila   6-8 : top 3 categorías individuales (cat | importe)
+ *
+ * colCat/colImp: letras de columna en _Calc donde viven las top 3 categorías individuales
+ * de esta persona (R/S para FM, T/U para Lucía).
+ */
+function bloquePersona(sh, fila, colIni, colFin, C, nombre, fIng, fApo, fGas, fSaldo, colCat, colImp) {
+  const ancho = colFin - colIni + 1;
+  const colLbl = colIni;
+  const colVal = colIni + Math.floor(ancho / 2);
+  const nLbl = colVal - colIni;
+  const nVal = colFin - colVal + 1;
 
-  // Cabecera de cada bloque (3 bloques: B:E, F:H, I:K)
-  const bloques = [
-    [2, 5, 'GASTOS FIJOS',         `=${C}!B7`,  `=${C}!B32`],
-    [6, 8, 'GASTOS VARIABLES',     `=${C}!B8`,  `=${C}!B33`],
-    [9, 11,'GASTOS INDIVIDUALES',  `=${C}!B35`, `=${C}!B34`],
+  // 4 líneas resumen
+  const lineas = [
+    ['Ingresos',         fIng,   false],
+    ['− Aportación bote',fApo,   false],
+    ['− Sus gastos',     fGas,   false],
+    ['EN BOLSILLO',      fSaldo, true],
   ];
-  bloques.forEach(([c1, c2, titulo, fEuro, fPct]) => {
+  lineas.forEach(([lbl, f, total], i) => {
+    const r = fila + i;
+    sh.setRowHeight(r, 28);
+    const fondo = total ? COLOR.acentoSuave : (i % 2 === 0 ? COLOR.panel : COLOR.cebra);
+    sh.getRange(r, colIni, 1, ancho).setBackground(fondo)
+      .setBorder(false, true, false, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+
     // Etiqueta
-    sh.getRange(fila, c1, 1, c2 - c1 + 1).merge()
-      .setValue(titulo)
-      .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.tenue)
-      .setBackground(COLOR.fondo).setVerticalAlignment('middle').setHorizontalAlignment('center');
-    // Importe €
-    sh.getRange(fila + 1, c1, 1, c2 - c1 + 1).merge()
-      .setFormula(fEuro).setNumberFormat('#,##0 €')
-      .setFontSize(18).setFontWeight('bold').setFontColor(COLOR.tinta)
-      .setBackground(COLOR.panel).setVerticalAlignment('middle').setHorizontalAlignment('center')
-      .setBorder(true, true, false, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
-    // %
-    sh.getRange(fila + 2, c1, 1, c2 - c1 + 1).merge()
-      .setFormula(`="(" & TEXT(${fPct.replace('=', '')};"0%") & " del gasto del mes)"`)
-      .setFontSize(9).setFontColor(COLOR.tenue)
-      .setBackground(COLOR.panel).setVerticalAlignment('middle').setHorizontalAlignment('center')
-      .setBorder(false, true, true, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
-  });
-
-  // Barra apilada visual: 3 celdas adyacentes, una por tipo, cada una con su color.
-  // Cada celda repinta proporcionalmente al % de su tipo (B32/B33/B34).
-  // azul = fijos · naranja = variables · rojo = individuales
-  sh.getRange(fila + 3, 2, 1, 4).merge()
-    .setFormula(`=IFERROR(REPT("█";ROUND(${C}!B32*40;0));"")`)
-    .setFontSize(11).setFontColor(COLOR.acento)
-    .setBackground(COLOR.fondo).setHorizontalAlignment('right').setVerticalAlignment('middle');
-  sh.getRange(fila + 3, 6, 1, 3).merge()
-    .setFormula(`=IFERROR(REPT("█";ROUND(${C}!B33*40;0));"")`)
-    .setFontSize(11).setFontColor(COLOR.naranja)
-    .setBackground(COLOR.fondo).setHorizontalAlignment('center').setVerticalAlignment('middle');
-  sh.getRange(fila + 3, 9, 1, 3).merge()
-    .setFormula(`=IFERROR(REPT("█";ROUND(${C}!B34*40;0));"")`)
-    .setFontSize(11).setFontColor(COLOR.rojo)
-    .setBackground(COLOR.fondo).setHorizontalAlignment('left').setVerticalAlignment('middle');
-}
-
-/* ---------- BLOQUE D3: Gastos individuales por persona ---------- */
-function bloqueIndividuales(sh, fila, C) {
-  // Dos sub-tablas lado a lado: B:F = FM, G:K = Lucía
-  const tablas = [
-    [2, 6,  'FM',    'R', 'S'],
-    [7, 11, 'Lucía', 'T', 'U'],
-  ];
-  tablas.forEach(([c1, c2, titulo, colCat, colImp]) => {
-    // Encabezado
-    sh.setRowHeight(fila, 26);
-    sh.getRange(fila, c1, 1, c2 - c1 + 1).merge()
-      .setValue('Top 3 categorías — ' + titulo)
-      .setFontSize(10).setFontWeight('bold').setFontColor(COLOR.cabTxt)
-      .setBackground(COLOR.acento).setVerticalAlignment('middle').setHorizontalAlignment('left');
-
-    // 3 filas top
-    for (let i = 0; i < 3; i++) {
-      const r = fila + 1 + i;
-      const cr = 2 + i; // _Calc fila 2..4
-      sh.setRowHeight(r, 24);
-      const fondo = i % 2 === 0 ? COLOR.panel : COLOR.cebra;
-      sh.getRange(r, c1, 1, c2 - c1 + 1).setBackground(fondo)
-        .setBorder(false, true, true, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
-
-      // Categoría (3 cols)
-      sh.getRange(r, c1, 1, 3).merge()
-        .setFormula(`=IFERROR(${C}!${colCat}${cr};"—")`)
-        .setFontSize(11).setFontColor(COLOR.tinta)
-        .setVerticalAlignment('middle').setHorizontalAlignment('left');
-      // Importe (2 cols)
-      sh.getRange(r, c1 + 3, 1, 2).merge()
-        .setFormula(`=IFERROR(${C}!${colImp}${cr};"")`)
-        .setNumberFormat('#,##0 €')
-        .setFontSize(11).setFontWeight('bold').setFontColor(COLOR.texto)
-        .setVerticalAlignment('middle').setHorizontalAlignment('right');
+    sh.getRange(r, colLbl, 1, nLbl).merge().setValue(lbl)
+      .setFontSize(11).setFontWeight(total ? 'bold' : 'normal')
+      .setFontColor(total ? COLOR.tinta : COLOR.texto)
+      .setVerticalAlignment('middle').setHorizontalAlignment('left');
+    // Valor
+    const valCell = sh.getRange(r, colVal, 1, nVal).merge().setFormula(f)
+      .setNumberFormat('#,##0.00 €')
+      .setFontSize(total ? 14 : 12).setFontWeight(total ? 'bold' : 'normal')
+      .setFontColor(total ? COLOR.tinta : COLOR.texto)
+      .setVerticalAlignment('middle').setHorizontalAlignment('right');
+    if (total) {
+      sh.getRange(r, colIni, 1, ancho)
+        .setBorder(true, true, true, true, false, false, COLOR.acento, SpreadsheetApp.BorderStyle.SOLID);
+      aplicarPositivoNegativo(sh, sh.getRange(r, colVal, 1, nVal));
     }
   });
+
+  // Espacio
+  sh.setRowHeight(fila + 4, 12);
+
+  // Etiqueta "Sus gastos individuales (top 3)"
+  const frTit = fila + 5;
+  sh.setRowHeight(frTit, 22);
+  sh.getRange(frTit, colIni, 1, ancho).merge()
+    .setValue('SUS GASTOS INDIVIDUALES (TOP 3)')
+    .setFontSize(9).setFontWeight('bold').setFontColor(COLOR.tenue)
+    .setBackground(COLOR.fondo).setVerticalAlignment('bottom').setHorizontalAlignment('left');
+
+  // 3 filas top categorías individuales
+  for (let i = 0; i < 3; i++) {
+    const r = fila + 6 + i;
+    const cr = 2 + i; // _Calc filas 2..4
+    sh.setRowHeight(r, 24);
+    const fondo = i % 2 === 0 ? COLOR.panel : COLOR.cebra;
+    sh.getRange(r, colIni, 1, ancho).setBackground(fondo)
+      .setBorder(false, true, true, true, false, false, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+
+    // Categoría
+    sh.getRange(r, colLbl, 1, nLbl).merge()
+      .setFormula(`=IFERROR(${C}!${colCat}${cr};"—")`)
+      .setFontSize(11).setFontColor(COLOR.tinta)
+      .setVerticalAlignment('middle').setHorizontalAlignment('left');
+    // Importe
+    sh.getRange(r, colVal, 1, nVal).merge()
+      .setFormula(`=IFERROR(${C}!${colImp}${cr};"")`)
+      .setNumberFormat('#,##0 €')
+      .setFontSize(11).setFontWeight('bold').setFontColor(COLOR.texto)
+      .setVerticalAlignment('middle').setHorizontalAlignment('right');
+  }
 }
 
 /* ---------- BLOQUE F: Objetivos top 3 ---------- */
@@ -1085,7 +1051,7 @@ function insertarGraficoEvolucion(sh, ss) {
     .setOption('chartArea', { left: 60, top: 40, width: '90%', height: '75%' })
     .setOption('width', 920)
     .setOption('height', 300)
-    .setPosition(54, 2, 0, 0)
+    .setPosition(50, 2, 0, 0)
     .build();
   sh.insertChart(grafico);
 }
