@@ -79,6 +79,11 @@ function manejarMensaje(msg) {
     return;
   }
 
+  // FOTO: ticket de super, notificación bancaria, etc. La procesa Gemini.
+  if (msg.photo && msg.photo.length) {
+    return iaProcesarFoto(chatId, msg.photo, msg.caption || '');
+  }
+
   const texto = (msg.text || '').trim();
 
   if (texto === '/start' || texto === '/nuevo' || texto === '/menu') {
@@ -131,6 +136,10 @@ function manejarMensaje(msg) {
 
   const estado = leerEstado(chatId);
   if (!estado) {
+    // No hay flujo activo: probar lenguaje natural con Gemini ("20 cena amigos", etc.)
+    if (texto.length > 0 && /\d/.test(texto)) {
+      return iaProcesarTextoLibre(chatId, texto);
+    }
     enviar(chatId, 'No te entendí. Pulsa /nuevo para registrar un movimiento, /resumen para ver el mes, o /ayuda para ver todos los comandos.');
     return;
   }
@@ -239,6 +248,25 @@ function manejarCallback(cb) {
   if (data === 'obj:cumplir') return listarObjetivos(chatId, 'cumplir');
   if (data.startsWith('obj:apor:')) return iniciarAportarObjetivo(chatId, Number(data.slice(9)));
   if (data.startsWith('obj:cump:')) return marcarObjetivoCumplido(chatId, Number(data.slice(9)));
+
+  // Confirmaciones IA (ticket de super, notificación bancaria, texto natural)
+  if (data === 'ia:ticket:guardar') return iaGuardarTicket(chatId, estado);
+  if (data === 'ia:gasto:guardar') return iaGuardarGastoSimple(chatId, estado);
+  if (data === 'ia:cancelar')      { limpiarEstado(chatId); return enviar(chatId, 'Descartado.'); }
+  if (data.startsWith('ia:cat:')) {
+    // El usuario elige una categoría sugerida (o "otra" para escribirla)
+    const idx = Number(data.slice(7));
+    if (estado && estado.iaSugerencias && estado.iaSugerencias[idx]) {
+      estado.categoria = estado.iaSugerencias[idx];
+      guardarEstado(chatId, estado);
+      return iaContinuarTrasCategoria(chatId, estado);
+    }
+  }
+  if (data === 'ia:persona:FM' || data === 'ia:persona:Lucía') {
+    estado.persona = data.slice(11);
+    guardarEstado(chatId, estado);
+    return iaContinuarTrasPersona(chatId, estado);
+  }
 }
 
 /* ============== CAMBIO DE OBJETIVO DE AHORRO ============== */
@@ -280,7 +308,7 @@ function mostrarMenuPrincipal(chatId) {
     [btn('🏆 Top', 'ver:top'), btn('↩ Borrar último', 'borrar:ultimo')],
     [btn('⚙️ Objetivo de ahorro', 'cfg:objetivo')],
   ];
-  enviar(chatId, '¿Qué quieres hacer?', teclado);
+  enviar(chatId, '¿Qué quieres hacer?\n\n📸 <i>Manda una foto de un ticket o notificación bancaria y lo registro automáticamente.</i>\n💬 <i>O escribe el gasto en lenguaje natural: "20 cena amigos", "53,40 mercadona compra"…</i>', teclado);
 }
 
 function mostrarPersonas(chatId, tipo) {
@@ -830,6 +858,12 @@ function enviarAyuda(chatId) {
     '/gc 30 cena — gasto compartido variable (paga el bote)',
     '/i 600 nomina — ingreso tuyo',
     '/a 200 — aportación al bote',
+    '',
+    '<b>📸 Con foto</b>',
+    'Mándame una foto de un <b>ticket</b> de super o de una <b>notificación bancaria</b> y la registro automáticamente.',
+    '',
+    '<b>💬 Lenguaje natural</b>',
+    'Escríbelo directo: "20 cena con amigos", "53,40 mercadona compra semanal", "600 nómina". Lo entiendo y pido confirmación.',
   ];
   enviar(chatId, lineas.join('\n'));
 }

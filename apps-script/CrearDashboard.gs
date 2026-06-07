@@ -91,6 +91,9 @@ function onOpen() {
     .createMenu('💰 Finanzas')
     .addItem('🧹 Limpiar datos (empezar de cero)', 'limpiarDatos')
     .addSeparator()
+    .addItem('🤖 Probar Gemini API key', 'testGemini')
+    .addItem('🗓 Activar resumen mensual + anomalías', 'configurarTriggersIA')
+    .addSeparator()
     .addItem('🔄 Recrear libro completo', 'recrearDashboardSeguro')
     .addToUI();
 }
