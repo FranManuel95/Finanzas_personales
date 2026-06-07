@@ -92,6 +92,8 @@ function onOpen() {
     .addItem('🆕 Añadir novedades del libro (seguro, no borra datos)', 'actualizarLibro')
     .addItem('🔁 Regenerar _Calc (refrescar fórmulas)', 'regenerarCalc')
     .addItem('🎨 Regenerar dashboards (Compartida/FM/Lucía/Anual)', 'regenerarDashboards')
+    .addItem('🍩 Regenerar SOLO donuts', 'regenerarSoloDonuts')
+    .addItem('🔍 Diagnosticar donuts', 'diagnosticarDonuts')
     .addSeparator()
     .addItem('🧹 Limpiar datos (empezar de cero)', 'limpiarDatos')
     .addSeparator()
@@ -201,6 +203,80 @@ function regenerarCalc() {
  * Necesario tras regenerar _Calc por primera vez (los donuts perdieron la
  * referencia al sheetId antiguo). NO toca Movimientos ni Tickets.
  */
+/**
+ * Diagnóstica el estado de los donuts: cuántos charts hay en cada hoja,
+ * a qué rangos apuntan, y si esos rangos tienen datos en _Calc.
+ * Muestra el resultado en un alert.
+ */
+function diagnosticarDonuts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const calc = ss.getSheetByName(HOJAS.CALC);
+  const lineas = [];
+  [HOJAS.COMPARTIDA, HOJAS.FM, HOJAS.LUCIA].forEach(nombre => {
+    const sh = ss.getSheetByName(nombre);
+    if (!sh) { lineas.push(`❌ Hoja "${nombre}" NO EXISTE`); return; }
+    const charts = sh.getCharts();
+    lineas.push(`📊 ${nombre}: ${charts.length} chart(s)`);
+    charts.forEach((c, i) => {
+      const ranges = c.getRanges();
+      ranges.forEach(r => {
+        const a1 = r.getA1Notation();
+        const hojaR = r.getSheet().getName();
+        lineas.push(`   • chart#${i} → ${hojaR}!${a1}`);
+      });
+    });
+  });
+  lineas.push('');
+  lineas.push('Datos en _Calc:');
+  ['U1:V5', 'Z1:AA5', 'AF1:AG5'].forEach(rg => {
+    const vals = calc.getRange(rg).getValues();
+    lineas.push(`   ${rg}:`);
+    vals.forEach(row => lineas.push(`      ${row[0] || '∅'} | ${row[1] || '∅'}`));
+  });
+  SpreadsheetApp.getUi().alert(lineas.join('\n'));
+}
+
+/**
+ * Borra TODOS los charts de las 3 hojas dashboard y los recrea apuntando a
+ * la _Calc actual. Más quirúrgico que regenerarDashboards (no recrea las
+ * hojas, solo los charts).
+ */
+function regenerarSoloDonuts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const calc = ss.getSheetByName(HOJAS.CALC);
+  if (!calc) { SpreadsheetApp.getUi().alert('No existe _Calc'); return; }
+  const mapeo = [
+    { hoja: HOJAS.COMPARTIDA, rango: 'U1:V11' },
+    { hoja: HOJAS.FM,         rango: 'Z1:AA11' },
+    { hoja: HOJAS.LUCIA,      rango: 'AF1:AG11' },
+  ];
+  let creados = 0;
+  mapeo.forEach(({hoja, rango}) => {
+    const sh = ss.getSheetByName(hoja);
+    if (!sh) return;
+    // Borra charts viejos.
+    sh.getCharts().forEach(c => sh.removeChart(c));
+    // Calcula posición: fila justo después del último contenido + 2.
+    const anchor = Math.max(sh.getLastRow() + 2, 50);
+    const ch = sh.newChart()
+      .setChartType(Charts.ChartType.PIE)
+      .addRange(calc.getRange(rango))
+      .setNumHeaders(1)
+      .setOption('pieHole', 0.6)
+      .setOption('title', 'Gastos por categoría')
+      .setOption('legend', { position: 'right' })
+      .setOption('colors', COLOR.donut)
+      .setOption('backgroundColor', COLOR.fondo)
+      .setOption('width', 660).setOption('height', 280)
+      .setPosition(anchor, 2, 0, 0)
+      .build();
+    sh.insertChart(ch);
+    creados++;
+  });
+  SpreadsheetApp.flush();
+  try { SpreadsheetApp.getUi().alert(`✅ ${creados} donuts recreados.`); } catch (e) {}
+}
+
 function regenerarDashboards() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   [HOJAS.COMPARTIDA, HOJAS.FM, HOJAS.LUCIA, HOJAS.ANUAL].forEach(n => {
