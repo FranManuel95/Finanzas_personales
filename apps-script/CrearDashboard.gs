@@ -91,6 +91,7 @@ function onOpen() {
     .createMenu('💰 Finanzas')
     .addItem('🆕 Añadir novedades del libro (seguro, no borra datos)', 'actualizarLibro')
     .addItem('🔁 Regenerar _Calc (refrescar fórmulas)', 'regenerarCalc')
+    .addItem('🎨 Regenerar dashboards (Compartida/FM/Lucía/Anual)', 'regenerarDashboards')
     .addSeparator()
     .addItem('🧹 Limpiar datos (empezar de cero)', 'limpiarDatos')
     .addSeparator()
@@ -173,18 +174,52 @@ function recrearDashboardSeguro() {
 
 /**
  * Regenera la hoja _Calc (oculta) sin tocar Movimientos, Tickets ni las hojas
- * dashboard. Útil para refrescar fórmulas cuando cambia el código sin pasar
- * por la regeneración completa.
+ * dashboard. LIMPIA contenido en vez de borrar la hoja para preservar el
+ * sheetId interno (los gráficos guardan la referencia por id, no por nombre).
  */
 function regenerarCalc() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const vieja = ss.getSheetByName(HOJAS.CALC);
-  if (vieja) ss.deleteSheet(vieja);
-  crearCalc(ss);
-  ss.getSheetByName(HOJAS.CALC).hideSheet();
+  let sh = ss.getSheetByName(HOJAS.CALC);
+  if (sh) {
+    sh.clear();
+    sh.clearConditionalFormatRules();
+    // Borra banding si existiera
+    sh.getBandings().forEach(b => b.remove());
+  } else {
+    sh = ss.insertSheet(HOJAS.CALC);
+  }
+  // Llama a la lógica de crearCalc usando la hoja existente.
+  _poblarCalc(ss, sh);
+  sh.hideSheet();
   SpreadsheetApp.flush();
   try { SpreadsheetApp.getUi().alert('Hoja _Calc regenerada. Los donuts y resúmenes deberían reflejar los datos.'); }
   catch (e) { console.log('_Calc regenerada.'); }
+}
+
+/**
+ * Regenera SOLO las 4 hojas dashboard (Compartida, FM, Lucía, Resumen anual).
+ * Necesario tras regenerar _Calc por primera vez (los donuts perdieron la
+ * referencia al sheetId antiguo). NO toca Movimientos ni Tickets.
+ */
+function regenerarDashboards() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  [HOJAS.COMPARTIDA, HOJAS.FM, HOJAS.LUCIA, HOJAS.ANUAL].forEach(n => {
+    const s = ss.getSheetByName(n);
+    if (s) ss.deleteSheet(s);
+  });
+  crearHojaCompartida(ss);
+  crearHojaPersona(ss, HOJAS.FM, 'Cuenta de FM', 'FM');
+  crearHojaPersona(ss, HOJAS.LUCIA, 'Cuenta de Lucía', 'Lucía');
+  crearHojaAnual(ss);
+  // Reordena pestañas para que queden en su sitio.
+  ['Ajustes', 'Objetivos', 'Movimientos', HOJAS.TICKETS, HOJAS.ANUAL, HOJAS.LUCIA, HOJAS.FM, HOJAS.COMPARTIDA].forEach(n => {
+    const s = ss.getSheetByName(n);
+    if (s) { ss.setActiveSheet(s); ss.moveActiveSheet(1); }
+  });
+  ss.setActiveSheet(ss.getSheetByName(HOJAS.COMPARTIDA));
+  SpreadsheetApp.flush();
+  try { SpreadsheetApp.getUi().alert('Hojas dashboard regeneradas. Los donuts deberían mostrar los datos.'); }
+  catch (e) { console.log('Dashboards regenerados.'); }
 }
 
 /**
@@ -511,6 +546,10 @@ function crearObjetivos(ss) {
  */
 function crearCalc(ss) {
   const sh = ss.insertSheet(HOJAS.CALC);
+  _poblarCalc(ss, sh);
+}
+
+function _poblarCalc(ss, sh) {
   const MOV = HOJAS.MOVIMIENTOS;
   const AJ = HOJAS.AJUSTES;
 
