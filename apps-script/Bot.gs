@@ -227,6 +227,9 @@ function manejarCallback(cb) {
   if (data === 'borrar:ultimo') return pedirConfirmacionBorrarUltimo(chatId);
   if (data === 'borrar:si') return ejecutarBorrarUltimo(chatId);
   if (data === 'borrar:no') return enviar(chatId, 'Borrado cancelado.');
+  // Borrar movimiento por número de fila (desde /ultimos con botones)
+  if (data.startsWith('borrarid:')) return pedirConfirmacionBorrarFila(chatId, Number(data.slice(9)));
+  if (data.startsWith('borrarOK:')) return ejecutarBorrarFila(chatId, Number(data.slice(9)));
 
   // Objetivos a largo plazo
   if (data === 'obj:menu') return mostrarMenuObjetivos(chatId);
@@ -475,16 +478,51 @@ function enviarResumenAnual(chatId) {
 /* ============== ÚLTIMOS MOVIMIENTOS ============== */
 
 function enviarUltimos(chatId) {
-  const movs = leerMovimientos();
-  if (movs.length === 0) return enviar(chatId, 'No hay movimientos registrados todavía.');
-  // Más recientes = últimas filas. leerMovimientos devuelve en orden de hoja.
-  const ult = movs.slice(-5).reverse();
-  const lineas = ['👀 <b>Últimos movimientos</b>', ''];
-  ult.forEach(m => {
-    lineas.push(`<b>${m.tipo}</b> · ${m.persona} · ${fechaCorta(m.fecha)}`);
-    lineas.push(`  ${m.concepto || '(sin concepto)'} — <b>${formatoEur(m.importe)}</b>`);
-  });
-  enviar(chatId, lineas.join('\n'));
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || sh.getLastRow() < 2) return enviar(chatId, 'No hay movimientos registrados todavía.');
+  const ultimaFila = sh.getLastRow();
+  const n = Math.min(10, ultimaFila - 1);
+  const filas = sh.getRange(ultimaFila - n + 1, 1, n, 7).getValues();
+  const filaInicio = ultimaFila - n + 1;
+
+  const lineas = ['👀 <b>Últimos movimientos</b>', '<i>pulsa 🗑 para borrar uno</i>', ''];
+  const teclado = [];
+  // Mostrar de más reciente a más antiguo
+  for (let i = filas.length - 1; i >= 0; i--) {
+    const v = filas[i];
+    const filaReal = filaInicio + i;
+    lineas.push(`<b>${v[1]}</b> · ${v[2]} · ${fechaCorta(v[0])}`);
+    lineas.push(`  ${v[4] || '(sin concepto)'} — <b>${formatoEur(v[5])}</b>`);
+    teclado.push([btn(`🗑 ${truncar(v[4] || v[3], 18)} · ${formatoEur(v[5])}`, `borrarid:${filaReal}`)]);
+  }
+  lineas.push('');
+  lineas.push('<i>Para EDITAR un movimiento: abre la hoja Movimientos en el Sheet y edita la celda directamente.</i>');
+  enviar(chatId, lineas.join('\n'), teclado);
+}
+
+function truncar(s, n) {
+  s = String(s || '');
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+/* ---------- Borrar movimiento por nº de fila ---------- */
+
+function pedirConfirmacionBorrarFila(chatId, fila) {
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || fila < 2 || fila > sh.getLastRow()) return enviar(chatId, '⚠️ Ese movimiento ya no existe.');
+  const v = sh.getRange(fila, 1, 1, 7).getValues()[0];
+  enviar(chatId,
+    `¿Borrar este movimiento?\n\n<b>${v[1]}</b> · ${v[2]}\n${v[4] || '(sin concepto)'} — <b>${formatoEur(v[5])}</b>\nFecha: ${fechaCorta(v[0])}`,
+    [[btn('✅ Sí, borrar', `borrarOK:${fila}`), btn('❌ No', 'borrar:no')]]);
+}
+
+function ejecutarBorrarFila(chatId, fila) {
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || fila < 2 || fila > sh.getLastRow()) return enviar(chatId, '⚠️ Ese movimiento ya no existe.');
+  const v = sh.getRange(fila, 1, 1, 7).getValues()[0];
+  sh.deleteRow(fila);
+  logBot(personaPorChat(chatId), 'Borrado', `${v[1]} · ${formatoEur(v[5])} - ${v[4] || '(sin concepto)'}`);
+  enviar(chatId, `Borrado ✅\n\n<b>${v[1]}</b> · ${v[2]}\n${v[4] || '(sin concepto)'} — <b>${formatoEur(v[5])}</b>`);
 }
 
 /* ============== TOP GASTOS DEL MES (sobre Movimientos) ============== */
@@ -778,9 +816,10 @@ function enviarAyuda(chatId) {
     '/nuevo · menú principal',
     '/resumen · resumen del mes activo',
     '/resumen_anual · resumen del año',
-    '/ultimos · últimos 5 movimientos',
+    '/ultimos · últimos 10 movimientos (con botón 🗑 para borrar cualquiera)',
     '/top · top gastos del mes',
-    '/borrar_ultimo · borra el último movimiento',
+    '/borrar_ultimo · borra el último movimiento (atajo)',
+    '<i>Para editar un movimiento: abre la hoja Movimientos y edita la celda.</i>',
     '/objetivos · objetivos a largo plazo',
     '/objetivo · cambia objetivo de ahorro mensual',
     '/cancelar · cancela el flujo actual',
