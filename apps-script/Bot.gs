@@ -250,7 +250,7 @@ function manejarCallback(cb) {
   if (data.startsWith('obj:cump:')) return marcarObjetivoCumplido(chatId, Number(data.slice(9)));
 
   // Confirmaciones IA (ticket de super, notificación bancaria, texto natural)
-  if (data === 'ia:ticket:guardar') return iaGuardarTicket(chatId, estado);
+  if (data.startsWith('ia:tg:')) return iaGuardarTicket(chatId, estado, data.slice(6));
   if (data === 'ia:gasto:guardar') return iaGuardarGastoSimple(chatId, estado);
   if (data === 'ia:cancelar')      { limpiarEstado(chatId); return enviar(chatId, 'Descartado.'); }
   if (data.startsWith('ia:cat:')) {

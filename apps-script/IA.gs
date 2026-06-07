@@ -67,7 +67,17 @@ function iaProcesarFoto(chatId, msgPhotos, caption) {
   (b) una notificación bancaria/captura de cargo: extrae comercio (campo "tienda"), fecha, importe total, concepto corto.
   (c) otra cosa: tipo_documento = "desconocido".
 
-  Devuelve JSON con el esquema dado. Categoriza productos/movimientos usando estas categorías:
+  REGLAS IMPORTANTES para EXTRAER PRODUCTOS de un ticket:
+  - Si la línea empieza con un número entero (ej. "2 COLA REGULAR 0,5L"), ESE NÚMERO ES LA CANTIDAD.
+  - Si el ticket tiene columnas "Descripción · P. Unit · Imp", usa:
+      cantidad = el número al principio de la línea (o 1 si no lo hay)
+      precio_unidad = el valor de "P. Unit"
+      precio = el valor de "Imp" (= cantidad × precio_unidad)
+  - Si solo hay un precio en la línea, cantidad=1 y precio_unidad=precio.
+  - El campo "nombre" debe ser SOLO el nombre del producto, SIN el número de cantidad inicial.
+    Ejemplo: línea "2 COLA REGULAR 0,5L 1,50 3,00" → nombre="COLA REGULAR 0,5L", cantidad=2, precio_unidad=1.50, precio=3.00.
+
+  Categoriza productos/movimientos usando estas categorías:
   Alquiler, Hipoteca, Comunidad, Luz, Agua, Gas, Internet, Móvil, Seguros, Suscripciones,
   Compra, Restaurantes, Ocio, Transporte, Viajes, Regalos, Hogar, Ropa, Salud, Caprichos, Otros.
 
@@ -92,7 +102,7 @@ function iaProcesarFoto(chatId, msgPhotos, caption) {
   }
 }
 
-/** Vista previa de ticket con botones de confirmar. */
+/** Vista previa de ticket con botones para elegir TIPO de gasto. */
 function iaPreviewTicket(chatId, datos) {
   const productos = (datos.productos || []).slice(0, 30);
   const total = datos.total || productos.reduce((a, p) => a + (p.precio || 0), 0);
@@ -105,11 +115,13 @@ function iaPreviewTicket(chatId, datos) {
     `<b>Productos (${productos.length}):</b>`,
   ];
   productos.slice(0, 15).forEach(p => {
-    lineas.push(`  • ${p.nombre} — ${formatoEur(p.precio)}`);
+    const cant = Number(p.cantidad) || 1;
+    const prefijoCant = cant > 1 ? `${cant} × ` : '';
+    lineas.push(`  • ${prefijoCant}${p.nombre} — ${formatoEur(p.precio)}`);
   });
   if (productos.length > 15) lineas.push(`  …y ${productos.length - 15} más`);
   lineas.push('');
-  lineas.push('¿Lo registro como gasto <b>compartido variable</b> (paga el bote) y guardo cada producto en la hoja Tickets?');
+  lineas.push('¿Cómo lo registro?');
 
   // Guardo el dato pendiente en el estado.
   guardarEstado(chatId, {
@@ -122,10 +134,11 @@ function iaPreviewTicket(chatId, datos) {
     },
   });
 
-  enviar(chatId, lineas.join('\n'), [[
-    btn('✅ Sí, guardar', 'ia:ticket:guardar'),
-    btn('❌ Descartar', 'ia:cancelar'),
-  ]]);
+  enviar(chatId, lineas.join('\n'), [
+    [btn('🛒 Compartido variable', 'ia:tg:cvar'), btn('🏠 Compartido fijo', 'ia:tg:cfijo')],
+    [btn('👤 Individual FM', 'ia:tg:ifm'), btn('👤 Individual Lucía', 'ia:tg:ilu')],
+    [btn('❌ Descartar', 'ia:cancelar')],
+  ]);
 }
 
 /** Vista previa de notificación bancaria con botones. */
@@ -259,16 +272,27 @@ function iaContinuarTrasCategoria(chatId, estado) {
  * Guardar tras confirmación
  * ============================================================ */
 
-function iaGuardarTicket(chatId, estado) {
+/**
+ * Guarda el ticket con el TIPO de gasto elegido por el usuario.
+ * subtipo: 'cvar' (Compartido variable/Bote) · 'cfijo' (Compartido fijo/Bote) ·
+ *          'ifm' (Individual/FM) · 'ilu' (Individual/Lucía)
+ */
+function iaGuardarTicket(chatId, estado, subtipo) {
   if (!estado || !estado.iaTicket) return enviar(chatId, '⚠️ No hay ticket pendiente.');
   const t = estado.iaTicket;
   const sheetMov = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
   const sheetTic = _ss().getSheetByName(HOJAS.TICKETS);
 
+  // Resuelve tipo/persona/categoría según subtipo.
+  let tipo, persona, categoria;
+  if (subtipo === 'cfijo') { tipo = 'Compartido fijo';     persona = 'Bote';  categoria = 'Compra'; }
+  else if (subtipo === 'ifm') { tipo = 'Individual';        persona = 'FM';    categoria = 'Otros'; }
+  else if (subtipo === 'ilu') { tipo = 'Individual';        persona = 'Lucía'; categoria = 'Otros'; }
+  else                        { tipo = 'Compartido variable'; persona = 'Bote'; categoria = 'Compra'; }
+
   const fechaMov = parsearFechaIA(t.fecha) || new Date();
-  // Movimiento agregado del total como Compartido variable del Bote.
   sheetMov.appendRow([
-    fechaMov, 'Compartido variable', 'Bote', 'Compra',
+    fechaMov, tipo, persona, categoria,
     `${t.tienda || 'Ticket'} (${(t.productos || []).length} prod.)`,
     Number(t.total) || 0,
     'Ticket OCR',
@@ -277,22 +301,27 @@ function iaGuardarTicket(chatId, estado) {
   // Genera un Ticket # único para identificar las líneas.
   const ticketId = 'T' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyMMddHHmmss');
   if (sheetTic) {
-    const filas = (t.productos || []).map(p => [
-      fechaMov,
-      t.tienda || '',
-      p.nombre || '',
-      Number(p.cantidad) || 1,
-      Number(p.precio) || 0,
-      Number(p.precio_unidad) || 0,
-      p.categoria || '',
-      ticketId,
-    ]);
+    const filas = (t.productos || []).map(p => {
+      const cant = Number(p.cantidad) || 1;
+      const precio = Number(p.precio) || 0;
+      const pUnidad = Number(p.precio_unidad) || (cant > 0 ? precio / cant : precio);
+      return [
+        fechaMov,
+        t.tienda || '',
+        p.nombre || '',
+        cant,
+        precio,
+        pUnidad,
+        p.categoria || '',
+        ticketId,
+      ];
+    });
     if (filas.length) sheetTic.getRange(sheetTic.getLastRow() + 1, 1, filas.length, 8).setValues(filas);
   }
 
-  logBot(personaPorChat(chatId), 'IA ticket guardado', `${t.tienda} · ${formatoEur(t.total)} · ${(t.productos || []).length} prod.`);
+  logBot(personaPorChat(chatId), 'IA ticket guardado', `${tipo} · ${persona} · ${t.tienda} · ${formatoEur(t.total)} · ${(t.productos || []).length} prod.`);
   limpiarEstado(chatId);
-  enviar(chatId, `✅ Ticket guardado.\n\n<b>${t.tienda}</b> · ${formatoEur(t.total)}\n${(t.productos || []).length} productos en la hoja Tickets · Ticket # ${ticketId}`);
+  enviar(chatId, `✅ Ticket guardado como <b>${tipo}</b> (${persona}).\n\n<b>${t.tienda}</b> · ${formatoEur(t.total)}\n${(t.productos || []).length} productos en la hoja Tickets · Ticket # ${ticketId}`);
 }
 
 function iaGuardarGastoSimple(chatId, estado) {
