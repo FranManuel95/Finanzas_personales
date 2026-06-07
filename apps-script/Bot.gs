@@ -240,6 +240,22 @@ function manejarCallback(cb) {
   if (data.startsWith('borrarid:')) return pedirConfirmacionBorrarFila(chatId, Number(data.slice(9)));
   if (data.startsWith('borrarOK:')) return ejecutarBorrarFila(chatId, Number(data.slice(9)));
 
+  // Editar movimiento por número de fila
+  if (data.startsWith('ed:'))  return menuEditarMovimiento(chatId, Number(data.slice(3)));
+  if (data.startsWith('edt:')) return menuEditarTipo(chatId, Number(data.slice(4)));
+  if (data.startsWith('edc:')) return menuEditarCategoria(chatId, Number(data.slice(4)));
+  if (data.startsWith('ets:')) {
+    // ets:FILA:codigo
+    const p = data.split(':');
+    return ejecutarEditarTipo(chatId, Number(p[1]), p[2]);
+  }
+  if (data.startsWith('ecs:')) {
+    // ecs:FILA:Categoría (categoría puede tener acentos/UTF-8)
+    const i1 = data.indexOf(':');
+    const i2 = data.indexOf(':', i1 + 1);
+    return ejecutarEditarCategoria(chatId, Number(data.slice(i1 + 1, i2)), data.slice(i2 + 1));
+  }
+
   // Objetivos a largo plazo
   if (data === 'obj:menu') return mostrarMenuObjetivos(chatId);
   if (data === 'obj:ver') return verObjetivos(chatId);
@@ -513,7 +529,7 @@ function enviarUltimos(chatId) {
   const filas = sh.getRange(ultimaFila - n + 1, 1, n, 7).getValues();
   const filaInicio = ultimaFila - n + 1;
 
-  const lineas = ['👀 <b>Últimos movimientos</b>', '<i>pulsa 🗑 para borrar uno</i>', ''];
+  const lineas = ['👀 <b>Últimos movimientos</b>', '<i>✏️ para editar · 🗑 para borrar</i>', ''];
   const teclado = [];
   // Mostrar de más reciente a más antiguo
   for (let i = filas.length - 1; i >= 0; i--) {
@@ -521,10 +537,13 @@ function enviarUltimos(chatId) {
     const filaReal = filaInicio + i;
     lineas.push(`<b>${v[1]}</b> · ${v[2]} · ${fechaCorta(v[0])}`);
     lineas.push(`  ${v[4] || '(sin concepto)'} — <b>${formatoEur(v[5])}</b>`);
-    teclado.push([btn(`🗑 ${truncar(v[4] || v[3], 18)} · ${formatoEur(v[5])}`, `borrarid:${filaReal}`)]);
+    teclado.push([
+      btn(`✏️ ${truncar(v[4] || v[3], 16)} · ${formatoEur(v[5])}`, `ed:${filaReal}`),
+      btn('🗑', `borrarid:${filaReal}`),
+    ]);
   }
   lineas.push('');
-  lineas.push('<i>Para EDITAR un movimiento: abre la hoja Movimientos en el Sheet y edita la celda directamente.</i>');
+  lineas.push('<i>Para cambiar importe o concepto: edita la celda directamente en la hoja Movimientos.</i>');
   enviar(chatId, lineas.join('\n'), teclado);
 }
 
@@ -551,6 +570,92 @@ function ejecutarBorrarFila(chatId, fila) {
   sh.deleteRow(fila);
   logBot(personaPorChat(chatId), 'Borrado', `${v[1]} · ${formatoEur(v[5])} - ${v[4] || '(sin concepto)'}`);
   enviar(chatId, `Borrado ✅\n\n<b>${v[1]}</b> · ${v[2]}\n${v[4] || '(sin concepto)'} — <b>${formatoEur(v[5])}</b>`);
+}
+
+/* ============== EDITAR MOVIMIENTO ============== */
+
+/** Lee la fila y muestra el menú principal de edición. */
+function menuEditarMovimiento(chatId, fila) {
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || fila < 2 || fila > sh.getLastRow()) return enviar(chatId, '⚠️ Ese movimiento ya no existe.');
+  const v = sh.getRange(fila, 1, 1, 7).getValues()[0];
+  enviar(chatId,
+    `✏️ <b>Editando movimiento</b>\n\n` +
+    `<b>${v[1]}</b> · ${v[2]} · ${v[3] || ''}\n` +
+    `${v[4] || '(sin concepto)'} — <b>${formatoEur(v[5])}</b>\n` +
+    `Fecha: ${fechaCorta(v[0])}\n\n` +
+    `¿Qué cambias?`,
+    [
+      [btn('🔄 Tipo + Persona', `edt:${fila}`)],
+      [btn('🏷 Categoría', `edc:${fila}`)],
+      [btn('❌ Cancelar', 'ia:cancelar')],
+    ]);
+}
+
+/** Muestra menú para cambiar tipo + persona. */
+function menuEditarTipo(chatId, fila) {
+  enviar(chatId, 'Nuevo <b>tipo + persona</b>:', [
+    [btn('💰 Ingreso FM', `ets:${fila}:ing_fm`),         btn('💰 Ingreso Lucía', `ets:${fila}:ing_lu`)],
+    [btn('🏦 Aportación FM', `ets:${fila}:apo_fm`),      btn('🏦 Aportación Lucía', `ets:${fila}:apo_lu`)],
+    [btn('🏠 Compartido fijo', `ets:${fila}:cfijo`),     btn('🛒 Compartido variable', `ets:${fila}:cvar`)],
+    [btn('👤 Individual FM', `ets:${fila}:ifm`),         btn('👤 Individual Lucía', `ets:${fila}:ilu`)],
+    [btn('🐷 Ahorro Compartido', `ets:${fila}:aho_b`),   btn('🐷 Ahorro FM', `ets:${fila}:aho_fm`),       btn('🐷 Ahorro Lucía', `ets:${fila}:aho_lu`)],
+    [btn('❌ Cancelar', 'ia:cancelar')],
+  ]);
+}
+
+/** Muestra menú para cambiar categoría (lista de Ajustes!D:F). */
+function menuEditarCategoria(chatId, fila) {
+  const ajustes = _ss().getSheetByName(HOJAS.AJUSTES);
+  // Lee las 3 columnas y aplana sin huecos, sin duplicados, ordenado.
+  const cats = new Set();
+  ['D2:D', 'E2:E', 'F2:F'].forEach(rg => {
+    ajustes.getRange(rg).getValues().forEach(r => { if (r[0]) cats.add(String(r[0]).trim()); });
+  });
+  const lista = Array.from(cats).sort();
+  // 3 botones por fila
+  const teclado = [];
+  for (let i = 0; i < lista.length; i += 3) {
+    teclado.push(lista.slice(i, i + 3).map(c => btn(c, `ecs:${fila}:${c}`)));
+  }
+  teclado.push([btn('❌ Cancelar', 'ia:cancelar')]);
+  enviar(chatId, 'Nueva <b>categoría</b>:', teclado);
+}
+
+/** Aplica el cambio de tipo+persona en la fila. */
+function ejecutarEditarTipo(chatId, fila, codigo) {
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || fila < 2 || fila > sh.getLastRow()) return enviar(chatId, '⚠️ Esa fila ya no existe.');
+  const mapa = {
+    ing_fm:  { tipo: 'Ingreso',              persona: 'FM' },
+    ing_lu:  { tipo: 'Ingreso',              persona: 'Lucía' },
+    apo_fm:  { tipo: 'Aportación',           persona: 'FM' },
+    apo_lu:  { tipo: 'Aportación',           persona: 'Lucía' },
+    cfijo:   { tipo: 'Compartido fijo',      persona: 'Bote' },
+    cvar:    { tipo: 'Compartido variable',  persona: 'Bote' },
+    ifm:     { tipo: 'Individual',           persona: 'FM' },
+    ilu:     { tipo: 'Individual',           persona: 'Lucía' },
+    aho_b:   { tipo: 'Ahorro',               persona: 'Bote' },
+    aho_fm:  { tipo: 'Ahorro',               persona: 'FM' },
+    aho_lu:  { tipo: 'Ahorro',               persona: 'Lucía' },
+  };
+  const cambio = mapa[codigo];
+  if (!cambio) return enviar(chatId, '⚠️ Código de tipo no reconocido.');
+  const antes = sh.getRange(fila, 1, 1, 7).getValues()[0];
+  sh.getRange(fila, 2).setValue(cambio.tipo);
+  sh.getRange(fila, 3).setValue(cambio.persona);
+  logBot(personaPorChat(chatId), 'Editado tipo+persona', `Fila ${fila}: ${antes[1]}/${antes[2]} → ${cambio.tipo}/${cambio.persona} · ${formatoEur(antes[5])}`);
+  enviar(chatId, `✅ Cambiado a <b>${cambio.tipo}</b> · ${cambio.persona}\n${antes[4] || '(sin concepto)'} — ${formatoEur(antes[5])}`);
+}
+
+/** Aplica el cambio de categoría en la fila. */
+function ejecutarEditarCategoria(chatId, fila, categoria) {
+  const sh = _ss().getSheetByName(HOJAS.MOVIMIENTOS);
+  if (!sh || fila < 2 || fila > sh.getLastRow()) return enviar(chatId, '⚠️ Esa fila ya no existe.');
+  const antes = sh.getRange(fila, 1, 1, 7).getValues()[0];
+  sh.getRange(fila, 4).setValue(categoria);
+  logBot(personaPorChat(chatId), 'Editada categoría', `Fila ${fila}: ${antes[3]} → ${categoria} · ${formatoEur(antes[5])}`);
+  enviar(chatId, `✅ Categoría cambiada a <b>${categoria}</b>\n${antes[4] || '(sin concepto)'} — ${formatoEur(antes[5])}`);
 }
 
 /* ============== TOP GASTOS DEL MES (sobre Movimientos) ============== */
@@ -844,10 +949,10 @@ function enviarAyuda(chatId) {
     '/nuevo · menú principal',
     '/resumen · resumen del mes activo',
     '/resumen_anual · resumen del año',
-    '/ultimos · últimos 10 movimientos (con botón 🗑 para borrar cualquiera)',
+    '/ultimos · últimos 10 movimientos (con botón ✏️ para editar y 🗑 para borrar)',
     '/top · top gastos del mes',
     '/borrar_ultimo · borra el último movimiento (atajo)',
-    '<i>Para editar un movimiento: abre la hoja Movimientos y edita la celda.</i>',
+    '<i>Editar permite cambiar tipo/persona y categoría. Para importe o concepto, edita la celda en la hoja Movimientos.</i>',
     '/objetivos · objetivos a largo plazo',
     '/objetivo · cambia objetivo de ahorro mensual',
     '/cancelar · cancela el flujo actual',
