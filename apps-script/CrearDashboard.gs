@@ -233,7 +233,12 @@ function diagnosticarDonuts() {
     lineas.push(`   ${rg}:`);
     vals.forEach(row => lineas.push(`      ${row[0] || '∅'} | ${row[1] || '∅'}`));
   });
-  SpreadsheetApp.getUi().alert(lineas.join('\n'));
+  const texto = lineas.join('\n');
+  // Siempre escribe en el log (visible en "Registro de ejecución")
+  Logger.log(texto);
+  console.log(texto);
+  // Si hay UI, también muestra alerta.
+  try { SpreadsheetApp.getUi().alert(texto); } catch (e) {}
 }
 
 /**
@@ -274,7 +279,10 @@ function regenerarSoloDonuts() {
     creados++;
   });
   SpreadsheetApp.flush();
-  try { SpreadsheetApp.getUi().alert(`✅ ${creados} donuts recreados.`); } catch (e) {}
+  const msg = `✅ ${creados} donuts recreados.`;
+  Logger.log(msg);
+  console.log(msg);
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
 }
 
 function regenerarDashboards() {
