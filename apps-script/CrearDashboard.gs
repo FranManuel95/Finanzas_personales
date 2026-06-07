@@ -626,25 +626,29 @@ function crearCalc(ss) {
    *   FM:         W:X (raw) → Z:AA (donut)   [Individual + FM]
    *   Lucía:      AC:AD (raw) → AF:AG (donut) [Individual + Lucía]
    */
-  const breakdown = (colCatRaw, colImpRaw, tipos, persona, colCatOut, colImpOut) => {
-    sh.getRange(`${colCatRaw}2`).setFormula(`=ARRAYFORMULA(D2:D40)`);
-    const suma = tipos.map(t => {
-      let s = `SUMIFS(${MOV}!F:F;${MOV}!A:A;">="&B46;${MOV}!A:A;"<"&B47;${MOV}!D:D;${colCatRaw}2:${colCatRaw}40;${MOV}!B:B;"${t}"`;
-      if (persona) s += `;${MOV}!C:C;"${persona}"`;
-      return `IFERROR(${s});0)`;
-    }).join('+');
-    sh.getRange(`${colImpRaw}2`).setFormula(`=ARRAYFORMULA(IF(${colCatRaw}2:${colCatRaw}40="";"";${suma}))`);
-    sh.getRange(`${colImpRaw}2:${colImpRaw}40`).setNumberFormat('#,##0.00 €');
+  // QUERY agrupa por categoría D y suma F directamente. Filtra por tipo, persona
+  // (opcional) y por rango de fechas usando B46/B47 como literal SQL `date 'YYYY-MM-DD'`.
+  // Esto sustituye al patrón viejo SUMIFS(...) con ARRAYFORMULA que NO se expandía
+  // por fila (cada SUMIFS devuelve un único número aunque el criterio sea array).
+  const breakdown = (colCatOut, colImpOut, tiposWhere, personaWhere) => {
     sh.getRange(`${colCatOut}1`).setValue('Categoría');
     sh.getRange(`${colImpOut}1`).setValue('Importe');
-    sh.getRange(`${colCatOut}2`).setFormula(
-      `=IFERROR(QUERY(${colCatRaw}2:${colImpRaw}40;"select Col1, Col2 where Col2 > 0 order by Col2 desc";0);"")`
-    );
-    sh.getRange(`${colImpOut}2:${colImpOut}11`).setNumberFormat('#,##0.00 €');
+    const where = personaWhere ? `(${tiposWhere}) and (${personaWhere})` : `(${tiposWhere})`;
+    const formula =
+      `=IFERROR(QUERY(${MOV}!A2:F;` +
+      `"select D, sum(F) where ${where} ` +
+      `and A >= date '" & TEXT(B46;"yyyy-mm-dd") & "' ` +
+      `and A < date '"  & TEXT(B47;"yyyy-mm-dd") & "' ` +
+      `group by D order by sum(F) desc label sum(F) ''";0);"")`;
+    sh.getRange(`${colCatOut}2`).setFormula(formula);
+    sh.getRange(`${colImpOut}2:${colImpOut}30`).setNumberFormat('#,##0.00 €');
   };
-  breakdown('R', 'S', ['Compartido fijo', 'Compartido variable'], null, 'U', 'V');
-  breakdown('W', 'X', ['Individual'], 'FM', 'Z', 'AA');
-  breakdown('AC', 'AD', ['Individual'], 'Lucía', 'AF', 'AG');
+  // Compartido: fijos + variables (sin persona, salen del Bote).
+  breakdown('U', 'V', `B = 'Compartido fijo' or B = 'Compartido variable'`, null);
+  // FM individual.
+  breakdown('Z', 'AA', `B = 'Individual'`, `C = 'FM'`);
+  // Lucía individual.
+  breakdown('AF', 'AG', `B = 'Individual'`, `C = 'Lucía'`);
 
   // Anchos auxiliares.
   sh.setColumnWidths(4, 13, 90);
