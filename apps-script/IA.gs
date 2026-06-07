@@ -424,10 +424,18 @@ function descargarFotoTelegram(fileId) {
   if (!info.ok) throw new Error('getFile fallo');
   const path = info.result.file_path;
   const blob = UrlFetchApp.fetch(`https://api.telegram.org/file/bot${token}/${path}`).getBlob();
-  return {
-    b64: Utilities.base64Encode(blob.getBytes()),
-    mime: blob.getContentType() || 'image/jpeg',
-  };
+  // Telegram a veces devuelve 'application/octet-stream' que Gemini rechaza.
+  // Inferimos el MIME real desde la extensión del path.
+  let mime = blob.getContentType() || '';
+  if (!mime || mime === 'application/octet-stream') {
+    const ext = (path.split('.').pop() || 'jpg').toLowerCase();
+    mime = ext === 'png'  ? 'image/png'
+         : ext === 'webp' ? 'image/webp'
+         : ext === 'heic' ? 'image/heic'
+         : ext === 'gif'  ? 'image/gif'
+         :                  'image/jpeg';
+  }
+  return { b64: Utilities.base64Encode(blob.getBytes()), mime: mime };
 }
 
 function parsearFechaIA(s) {

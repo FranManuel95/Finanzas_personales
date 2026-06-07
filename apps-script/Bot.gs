@@ -303,7 +303,7 @@ function mostrarMenuPrincipal(chatId) {
     [btn('💰 Ingreso', 'tipo:ingreso'), btn('🏦 Aportación bote', 'tipo:aportacion')],
     [btn('🏠 Gasto comp. fijo', 'tipo:gc_fijo'), btn('🛒 Gasto comp. variable', 'tipo:gc_variable')],
     [btn('👤 Gasto FM', 'tipo:gasto_fm'), btn('👤 Gasto Lucía', 'tipo:gasto_lucia')],
-    [btn('🐷 Ahorro común', 'tipo:aho_compartido'), btn('🐷 Ahorro FM', 'tipo:aho_fm'), btn('🐷 Ahorro Lucía', 'tipo:aho_lucia')],
+    [btn('🐷 Compartido', 'tipo:aho_compartido'), btn('🐷 FM', 'tipo:aho_fm'), btn('🐷 Lucía', 'tipo:aho_lucia')],
     [btn('🎯 Objetivos', 'obj:menu'), btn('👀 Últimos', 'ver:ultimos')],
     [btn('🏆 Top', 'ver:top'), btn('↩ Borrar último', 'borrar:ultimo')],
     [btn('⚙️ Objetivo de ahorro', 'cfg:objetivo')],
