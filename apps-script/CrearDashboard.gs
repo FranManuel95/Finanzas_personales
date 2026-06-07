@@ -89,12 +89,14 @@ const FUENTE_TIT = 'Playfair Display'; // títulos elegantes
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('💰 Finanzas')
+    .addItem('🆕 Añadir novedades del libro (seguro, no borra datos)', 'actualizarLibro')
+    .addSeparator()
     .addItem('🧹 Limpiar datos (empezar de cero)', 'limpiarDatos')
     .addSeparator()
     .addItem('🤖 Probar Gemini API key', 'testGemini')
     .addItem('🗓 Activar resumen mensual + anomalías', 'configurarTriggersIA')
     .addSeparator()
-    .addItem('🔄 Recrear libro completo', 'recrearDashboardSeguro')
+    .addItem('🔄 Recrear libro completo (⚠ borra todo)', 'recrearDashboardSeguro')
     .addToUI();
 }
 
@@ -166,6 +168,58 @@ function recrearDashboardSeguro() {
     ui.ButtonSet.YES_NO
   );
   if (r === ui.Button.YES) crearDashboard();
+}
+
+/**
+ * Añade ELEMENTOS NUEVOS al libro existente SIN tocar movimientos ni hojas previas.
+ * Se usa cuando se despliega código que añade hojas/parámetros nuevos pero ya
+ * tienes datos reales que no quieres perder regenerando todo.
+ *
+ * Actualmente añade (si no existen):
+ *  - Hoja "Tickets" (Sprint 1 OCR)
+ *  - Fila "Gemini API key" en Ajustes
+ */
+function actualizarLibro() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const novedades = [];
+
+  // 1) Hoja Tickets
+  if (!ss.getSheetByName(HOJAS.TICKETS)) {
+    crearHojaTickets(ss);
+    novedades.push('✅ Hoja "Tickets" creada');
+  } else {
+    novedades.push('• Hoja "Tickets" ya existía');
+  }
+
+  // 2) Fila Gemini API key en Ajustes
+  const sh = ss.getSheetByName(HOJAS.AJUSTES);
+  if (sh) {
+    const finder = sh.getRange('A:A').createTextFinder('Gemini API key').matchEntireCell(true).findNext();
+    if (!finder) {
+      // Encuentra la primera fila vacía después del bloque de parámetros (col A).
+      let r = 2;
+      while (sh.getRange(r, 1).getValue()) r++;
+      sh.getRange(r, 1, 1, 3).setValues([['Gemini API key', '', 'Tu API key de Google AI Studio (https://aistudio.google.com/apikey). Necesaria para OCR de tickets, captura sin teclear, resumen mensual con insights.']]);
+      sh.getRange(r, 1).setFontWeight('bold').setFontColor(COLOR.tinta);
+      sh.getRange(r, 2).setBackground(COLOR.acentoSuave).setFontColor(COLOR.tinta);
+      sh.getRange(r, 3).setFontColor(COLOR.texto).setWrap(true);
+      sh.getRange(r, 1, 1, 3).setBorder(true, true, true, true, true, true, COLOR.borde, SpreadsheetApp.BorderStyle.SOLID);
+      novedades.push(`✅ Fila "Gemini API key" añadida (Ajustes!B${r})`);
+    } else {
+      novedades.push('• Fila "Gemini API key" ya existía');
+    }
+  }
+
+  // Reordena pestañas para meter Tickets en su sitio.
+  ['Ajustes', 'Objetivos', 'Movimientos', HOJAS.TICKETS, HOJAS.ANUAL, HOJAS.LUCIA, HOJAS.FM, HOJAS.COMPARTIDA].forEach(n => {
+    const s = ss.getSheetByName(n);
+    if (s) { ss.setActiveSheet(s); ss.moveActiveSheet(1); }
+  });
+  ss.setActiveSheet(ss.getSheetByName(HOJAS.COMPARTIDA));
+
+  SpreadsheetApp.flush();
+  try { SpreadsheetApp.getUi().alert('Libro actualizado:\n\n' + novedades.join('\n')); }
+  catch (e) { console.log(novedades.join('\n')); }
 }
 
 /**
