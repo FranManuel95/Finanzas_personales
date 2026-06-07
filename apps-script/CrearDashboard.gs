@@ -90,6 +90,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('💰 Finanzas')
     .addItem('🆕 Añadir novedades del libro (seguro, no borra datos)', 'actualizarLibro')
+    .addItem('🔁 Regenerar _Calc (refrescar fórmulas)', 'regenerarCalc')
     .addSeparator()
     .addItem('🧹 Limpiar datos (empezar de cero)', 'limpiarDatos')
     .addSeparator()
@@ -168,6 +169,22 @@ function recrearDashboardSeguro() {
     ui.ButtonSet.YES_NO
   );
   if (r === ui.Button.YES) crearDashboard();
+}
+
+/**
+ * Regenera la hoja _Calc (oculta) sin tocar Movimientos, Tickets ni las hojas
+ * dashboard. Útil para refrescar fórmulas cuando cambia el código sin pasar
+ * por la regeneración completa.
+ */
+function regenerarCalc() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const vieja = ss.getSheetByName(HOJAS.CALC);
+  if (vieja) ss.deleteSheet(vieja);
+  crearCalc(ss);
+  ss.getSheetByName(HOJAS.CALC).hideSheet();
+  SpreadsheetApp.flush();
+  try { SpreadsheetApp.getUi().alert('Hoja _Calc regenerada. Los donuts y resúmenes deberían reflejar los datos.'); }
+  catch (e) { console.log('_Calc regenerada.'); }
 }
 
 /**
