@@ -23,6 +23,7 @@ const HOJAS = {
   FM: 'FM',
   LUCIA: 'Lucía',
   ANUAL: 'Resumen anual',
+  TICKETS: 'Tickets',
   MOVIMIENTOS: 'Movimientos',
   OBJETIVOS: 'Objetivos',
   AJUSTES: 'Ajustes',
@@ -122,13 +123,14 @@ function crearDashboard() {
   crearHojaPersona(ss, HOJAS.FM, 'Cuenta de FM', 'FM');
   crearHojaPersona(ss, HOJAS.LUCIA, 'Cuenta de Lucía', 'Lucía');
   crearHojaAnual(ss);
+  crearHojaTickets(ss);
 
   // Ocultar hojas internas.
   ss.getSheetByName(HOJAS.CALC).hideSheet();
   ss.getSheetByName(HOJAS.LOG).hideSheet();
 
-  // Orden de pestañas: Compartida · FM · Lucía · Resumen anual · Movimientos · Objetivos · Ajustes.
-  ['Ajustes', 'Objetivos', 'Movimientos', HOJAS.ANUAL, HOJAS.LUCIA, HOJAS.FM, HOJAS.COMPARTIDA].forEach(n => {
+  // Orden de pestañas: Compartida · FM · Lucía · Resumen anual · Tickets · Movimientos · Objetivos · Ajustes.
+  ['Ajustes', 'Objetivos', 'Movimientos', HOJAS.TICKETS, HOJAS.ANUAL, HOJAS.LUCIA, HOJAS.FM, HOJAS.COMPARTIDA].forEach(n => {
     const s = ss.getSheetByName(n);
     if (s) { ss.setActiveSheet(s); ss.moveActiveSheet(1); }
   });
@@ -219,6 +221,7 @@ function crearAjustes(ss) {
     ['Tasa de ahorro objetivo (%)', 0.2, 'Referencia para el KPI de tasa de ahorro (20% es el estándar saludable).'],
     ['Reserva de emergencia objetivo (meses)', 3, 'Meses de gastos esenciales que tu ahorro debería cubrir (3-6 estándar).'],
     ['Umbral settle-up (€)', 20, 'Solo en modo proporcional: a partir de este desvío se sugiere transferencia.'],
+    ['Gemini API key', '', 'Tu API key de Google AI Studio (https://aistudio.google.com/apikey). Necesaria para OCR de tickets, categorización automática y resumen mensual con insights.'],
   ];
   sh.getRange(1, 1, params.length, 3).setValues(params);
 
@@ -329,6 +332,41 @@ function crearMovimientos(ss) {
 
   sh.setFrozenRows(1);
   sh.getRange('A:G').setFontFamily(FUENTE);
+}
+
+/* ====================== HOJA: TICKETS (productos desglosados de tickets de super) ====================== */
+
+function crearHojaTickets(ss) {
+  const sh = ss.insertSheet(HOJAS.TICKETS);
+
+  const cab = ['Fecha', 'Tienda', 'Producto', 'Cantidad', 'Precio (€)', 'Precio/ud (€)', 'Categoría', 'Ticket #'];
+  sh.getRange(1, 1, 1, 8).setValues([cab]);
+  sh.getRange('A1:H1')
+    .setFontWeight('bold').setFontColor(COLOR.cabTxt).setBackground(COLOR.cab)
+    .setVerticalAlignment('middle').setHorizontalAlignment('left');
+  sh.setRowHeight(1, 30);
+
+  sh.setColumnWidth(1, 120);
+  sh.setColumnWidth(2, 140);
+  sh.setColumnWidth(3, 280);
+  sh.setColumnWidth(4, 80);
+  sh.setColumnWidth(5, 100);
+  sh.setColumnWidth(6, 110);
+  sh.setColumnWidth(7, 140);
+  sh.setColumnWidth(8, 90);
+
+  sh.getRange('A:A').setNumberFormat('yyyy-mm-dd HH:mm');
+  sh.getRange('E:F').setNumberFormat('#,##0.00 €');
+  sh.getRange('A2:H').setFontColor(COLOR.texto).setVerticalAlignment('middle');
+
+  const banda = sh.getRange(1, 1, 200, 8)
+    .applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false);
+  banda.setHeaderRowColor(COLOR.cab);
+  banda.setFirstRowColor(COLOR.panel);
+  banda.setSecondRowColor(COLOR.cebra);
+
+  sh.setFrozenRows(1);
+  sh.getRange('A:H').setFontFamily(FUENTE);
 }
 
 /* ====================== HOJA: OBJETIVOS (largo plazo) ====================== */
