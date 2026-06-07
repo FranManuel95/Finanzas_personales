@@ -249,30 +249,40 @@ function diagnosticarDonuts() {
 function regenerarSoloDonuts() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const calc = ss.getSheetByName(HOJAS.CALC);
-  if (!calc) { SpreadsheetApp.getUi().alert('No existe _Calc'); return; }
+  if (!calc) { console.log('No existe _Calc'); return; }
   const mapeo = [
-    { hoja: HOJAS.COMPARTIDA, rango: 'U1:V11' },
-    { hoja: HOJAS.FM,         rango: 'Z1:AA11' },
-    { hoja: HOJAS.LUCIA,      rango: 'AF1:AG11' },
+    { hoja: HOJAS.COMPARTIDA, colCat: 'U', colImp: 'V' },
+    { hoja: HOJAS.FM,         colCat: 'Z', colImp: 'AA' },
+    { hoja: HOJAS.LUCIA,      colCat: 'AF', colImp: 'AG' },
   ];
   let creados = 0;
-  mapeo.forEach(({hoja, rango}) => {
+  mapeo.forEach(({hoja, colCat, colImp}) => {
     const sh = ss.getSheetByName(hoja);
     if (!sh) return;
     // Borra charts viejos.
     sh.getCharts().forEach(c => sh.removeChart(c));
-    // Calcula posición: fila justo después del último contenido + 2.
+    // Detecta cuántas filas con datos hay en colCat (a partir de fila 2).
+    const colVals = calc.getRange(`${colCat}2:${colCat}40`).getValues();
+    let ultima = 0;
+    for (let i = 0; i < colVals.length; i++) {
+      if (colVals[i][0] !== '' && colVals[i][0] != null) ultima = i + 1;
+    }
+    if (ultima === 0) { console.log(`${hoja}: sin datos para donut`); return; }
+    // Rango exacto: header + filas con dato.
+    const rango = `${colCat}1:${colImp}${ultima + 1}`;
+    console.log(`${hoja}: chart con rango ${rango}`);
     const anchor = Math.max(sh.getLastRow() + 2, 50);
     const ch = sh.newChart()
       .setChartType(Charts.ChartType.PIE)
       .addRange(calc.getRange(rango))
       .setNumHeaders(1)
-      .setOption('pieHole', 0.6)
+      .setOption('useFirstColumnAsDomain', true)
+      .setOption('pieHole', 0.5)
       .setOption('title', 'Gastos por categoría')
       .setOption('legend', { position: 'right' })
       .setOption('colors', COLOR.donut)
-      .setOption('backgroundColor', COLOR.fondo)
-      .setOption('width', 660).setOption('height', 280)
+      .setOption('backgroundColor', '#FFFFFF')
+      .setOption('width', 600).setOption('height', 280)
       .setPosition(anchor, 2, 0, 0)
       .build();
     sh.insertChart(ch);
